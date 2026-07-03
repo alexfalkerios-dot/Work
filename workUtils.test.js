@@ -1,4 +1,4 @@
-const {
+import {
   TAX_RATE, RELIABILITY_RATE, NIGHT_MINOR_RATE, NIGHT_MAJOR_RATE,
   HIGH_SEASON_THRESHOLD, HIGH_SEASON_BONUS, FLEX_BONUS_CAP, WEEKEND_BONUS,
   TRAVEL_WORK_BONUS, PER_DIEM_RATE, OT_TIER1_HOURS, OT_TIER1_MULT, OT_TIER2_MULT,
@@ -9,7 +9,7 @@ const {
   monthRange, toMinutes, shiftHoursOf, nightHoursOf,
   normalizeShift, computeShiftPay,
   perDiemDaysForMonth, isFullMonthInTrip, computeMonthSummary,
-} = require('./workUtils');
+} from './workUtils.js';
 
 // =====================================================================
 // 1. Date / time utility functions

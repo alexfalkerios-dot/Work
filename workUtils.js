@@ -246,8 +246,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   };
 }
 
-module.exports = {
-  // Constants
+export {
   TAX_RATE,
   RELIABILITY_RATE,
   NIGHT_MINOR_RATE,
@@ -264,7 +263,6 @@ module.exports = {
   DEFAULT_SETTINGS,
   MONTHS_NOM,
   MONTHS_SHORT,
-  // Utilities
   pad2,
   formatMoney,
   formatHours,
@@ -281,7 +279,6 @@ module.exports = {
   toMinutes,
   shiftHoursOf,
   nightHoursOf,
-  // Business logic
   normalizeShift,
   computeShiftPay,
   perDiemDaysForMonth,
