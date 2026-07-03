@@ -287,6 +287,7 @@ export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [monthMeta, setMonthMeta] = useState({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [saveError, setSaveError] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_SETTINGS);
@@ -303,21 +304,34 @@ export default function App() {
       let loadedSettings = DEFAULT_SETTINGS;
       let loadedShifts = [];
       let loadedMeta = {};
+      const errors = [];
       try {
         const res = await window.storage.get(SETTINGS_KEY, false);
         if (res && res.value) loadedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(res.value) };
-      } catch (e) {}
+      } catch (e) {
+        console.error('Failed to load settings:', e);
+        errors.push('настройки');
+      }
       try {
         const res = await window.storage.get(SHIFTS_KEY, false);
         if (res && res.value) {
           const parsed = JSON.parse(res.value);
           if (Array.isArray(parsed)) loadedShifts = parsed.map(normalizeShift);
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error('Failed to load shifts:', e);
+        errors.push('смены');
+      }
       try {
         const res = await window.storage.get(MONTH_META_KEY, false);
         if (res && res.value) loadedMeta = JSON.parse(res.value) || {};
-      } catch (e) {}
+      } catch (e) {
+        console.error('Failed to load month metadata:', e);
+        errors.push('данные месяца');
+      }
+      if (errors.length > 0) {
+        setLoadError(`Не удалось загрузить: ${errors.join(', ')}. Используются значения по умолчанию.`);
+      }
       setSettings(loadedSettings);
       setSettingsDraft(loadedSettings);
       setShifts(loadedShifts);
@@ -341,27 +355,40 @@ export default function App() {
     setShifts(next);
     try {
       const result = await window.storage.set(SHIFTS_KEY, JSON.stringify(next), false);
-      setSaveError(result ? '' : 'Не удалось сохранить. Попробуйте ещё раз.');
+      setSaveError(result ? '' : 'Не удалось сохранить смены. Попробуйте ещё раз.');
     } catch (e) {
-      setSaveError('Не удалось сохранить. Проверьте соединение.');
+      console.error('Failed to save shifts:', e);
+      setSaveError('Не удалось сохранить смены. Проверьте соединение.');
     }
   }, []);
 
   const persistSettings = useCallback(async (next) => {
     setSettings(next);
     try {
-      await window.storage.set(SETTINGS_KEY, JSON.stringify(next), false);
+      const result = await window.storage.set(SETTINGS_KEY, JSON.stringify(next), false);
+      if (!result) {
+        setSaveError('Не удалось сохранить настройки. Попробуйте ещё раз.');
+      } else {
+        setSaveError('');
+      }
     } catch (e) {
-      setSaveError('Не удалось сохранить настройки.');
+      console.error('Failed to save settings:', e);
+      setSaveError('Не удалось сохранить настройки. Проверьте соединение.');
     }
   }, []);
 
   const persistMonthMeta = useCallback(async (next) => {
     setMonthMeta(next);
     try {
-      await window.storage.set(MONTH_META_KEY, JSON.stringify(next), false);
+      const result = await window.storage.set(MONTH_META_KEY, JSON.stringify(next), false);
+      if (!result) {
+        setSaveError('Не удалось сохранить данные месяца. Попробуйте ещё раз.');
+      } else {
+        setSaveError('');
+      }
     } catch (e) {
-      setSaveError('Не удалось сохранить настройки месяца.');
+      console.error('Failed to save month metadata:', e);
+      setSaveError('Не удалось сохранить данные месяца. Проверьте соединение.');
     }
   }, []);
 
@@ -578,6 +605,13 @@ export default function App() {
             <SettingsIcon size={18} />
           </button>
         </header>
+
+        {loadError && (
+          <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs px-3 py-2">
+            <AlertCircle size={14} className="shrink-0" />
+            {loadError}
+          </div>
+        )}
 
         {saveError && (
           <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
