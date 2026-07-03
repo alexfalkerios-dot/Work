@@ -284,6 +284,18 @@ describe('normalizeShift', () => {
     const s = normalizeShift({ id: 'abc-123', date: '2026-07-01' });
     expect(s.id).toBe('abc-123');
   });
+  it('defaults break fields to 0', () => {
+    const s = normalizeShift({ date: '2026-07-01' });
+    expect(s.breakMin).toBe(0);
+    expect(s.quarter1Min).toBe(0);
+    expect(s.quarter2Min).toBe(0);
+  });
+  it('preserves break fields when provided', () => {
+    const s = normalizeShift({ date: '2026-07-01', breakMin: 60, quarter1Min: 15, quarter2Min: 15 });
+    expect(s.breakMin).toBe(60);
+    expect(s.quarter1Min).toBe(15);
+    expect(s.quarter2Min).toBe(15);
+  });
 });
 
 // =====================================================================
@@ -300,10 +312,42 @@ describe('computeShiftPay', () => {
     ...overrides,
   });
 
-  it('calculates base pay: hours * rate', () => {
+  it('calculates base pay: hours * rate (no breaks)', () => {
     const pay = computeShiftPay(makeShift());
+    expect(pay.grossHours).toBe(8);
+    expect(pay.breakHours).toBe(0);
     expect(pay.hours).toBe(8);
     expect(pay.base).toBe(8 * 231);
+  });
+
+  it('deducts break time from paid hours', () => {
+    const pay = computeShiftPay(makeShift({ breakMin: 60 }));
+    expect(pay.grossHours).toBe(8);
+    expect(pay.breakHours).toBe(1);
+    expect(pay.hours).toBe(7);
+    expect(pay.base).toBe(7 * 231);
+  });
+
+  it('deducts combined break + quarters from paid hours', () => {
+    const pay = computeShiftPay(makeShift({ breakMin: 60, quarter1Min: 15, quarter2Min: 15 }));
+    expect(pay.grossHours).toBe(8);
+    expect(pay.breakHours).toBe(1.5);
+    expect(pay.hours).toBe(6.5);
+    expect(pay.base).toBeCloseTo(6.5 * 231);
+  });
+
+  it('clamps hours to 0 when breaks exceed shift duration', () => {
+    const pay = computeShiftPay(makeShift({ breakMin: 600 }));
+    expect(pay.hours).toBe(0);
+    expect(pay.base).toBe(0);
+  });
+
+  it('scales night hours proportionally with breaks', () => {
+    // 22:00-06:00 = 8h gross, all 8h night, with 60 min break → 7h paid, night = 8*(7/8) = 7
+    const pay = computeShiftPay(makeShift({ startTime: '22:00', endTime: '06:00', breakMin: 60 }));
+    expect(pay.grossHours).toBe(8);
+    expect(pay.hours).toBe(7);
+    expect(pay.night).toBeCloseTo(8 * (7 / 8));
   });
 
   it('calculates reliability bonus at 15%', () => {
@@ -319,8 +363,9 @@ describe('computeShiftPay', () => {
   });
 
   it('applies minor night bonus (20%) when < half of shift is at night', () => {
-    // 18:00-02:00 = 8h total, 4h night (exactly half, not > half → minor)
+    // 18:00-02:00 = 8h total, 4h night (exactly half, not > half → minor), no breaks
     const pay = computeShiftPay(makeShift({ startTime: '18:00', endTime: '02:00' }));
+    expect(pay.grossHours).toBe(8);
     expect(pay.hours).toBe(8);
     expect(pay.night).toBe(4);
     expect(pay.isMajorNight).toBe(false);
@@ -328,8 +373,9 @@ describe('computeShiftPay', () => {
   });
 
   it('applies major night bonus (30%) when > half of shift is at night', () => {
-    // 22:00-06:00 = 8h total, 8h night (all night → major)
+    // 22:00-06:00 = 8h total, 8h night (all night → major), no breaks
     const pay = computeShiftPay(makeShift({ startTime: '22:00', endTime: '06:00' }));
+    expect(pay.grossHours).toBe(8);
     expect(pay.hours).toBe(8);
     expect(pay.night).toBe(8);
     expect(pay.isMajorNight).toBe(true);
@@ -377,6 +423,7 @@ describe('computeShiftPay', () => {
       rate: 200,
       extraAmount: 0,
     });
+    expect(pay.grossHours).toBe(10);
     expect(pay.hours).toBe(10);
     expect(pay.night).toBe(0);
     expect(pay.base).toBe(2000);
@@ -737,5 +784,9 @@ describe('constants', () => {
     expect(DEFAULT_SETTINGS).toHaveProperty('tripStart');
     expect(DEFAULT_SETTINGS).toHaveProperty('p1OnTrip');
     expect(DEFAULT_SETTINGS).toHaveProperty('p2OnTrip');
+    expect(DEFAULT_SETTINGS).toHaveProperty('defaultBreakMin');
+    expect(DEFAULT_SETTINGS).toHaveProperty('defaultQuarterMin');
+    expect(DEFAULT_SETTINGS.defaultBreakMin).toBe(60);
+    expect(DEFAULT_SETTINGS.defaultQuarterMin).toBe(15);
   });
 });

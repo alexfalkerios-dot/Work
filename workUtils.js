@@ -24,6 +24,8 @@ const DEFAULT_SETTINGS = {
   tripEnd: '',
   p1OnTrip: true,
   p2OnTrip: true,
+  defaultBreakMin: 60,
+  defaultQuarterMin: 15,
 };
 
 const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -137,6 +139,9 @@ function normalizeShift(raw) {
     startTime: raw.startTime || '',
     endTime: raw.endTime || '',
     legacyHours: raw.startTime ? 0 : (raw.hours || 0),
+    breakMin: raw.breakMin || 0,
+    quarter1Min: raw.quarter1Min || 0,
+    quarter2Min: raw.quarter2Min || 0,
     rate: raw.rate || 0,
     extraAmount: raw.extraAmount ?? raw.bonus ?? 0,
     extraNote: raw.extraNote ?? raw.bonusNote ?? '',
@@ -147,8 +152,11 @@ function normalizeShift(raw) {
 
 function computeShiftPay(shift) {
   const hasTimes = !!(shift.startTime && shift.endTime);
-  const hours = hasTimes ? shiftHoursOf(shift.startTime, shift.endTime) : (shift.legacyHours || 0);
-  const night = hasTimes ? nightHoursOf(shift.startTime, shift.endTime) : 0;
+  const grossHours = hasTimes ? shiftHoursOf(shift.startTime, shift.endTime) : (shift.legacyHours || 0);
+  const grossNight = hasTimes ? nightHoursOf(shift.startTime, shift.endTime) : 0;
+  const breakHours = ((shift.breakMin || 0) + (shift.quarter1Min || 0) + (shift.quarter2Min || 0)) / 60;
+  const hours = Math.max(0, grossHours - breakHours);
+  const night = grossHours > 0 ? grossNight * (hours / grossHours) : 0;
   const rate = shift.rate || 0;
   const base = hours * rate;
   const isMajorNight = hours > 0 && night > hours / 2;
@@ -160,7 +168,7 @@ function computeShiftPay(shift) {
   const taxable = base + nightBonus + reliabilityBonus + weekendBonus + extra;
   const tax = taxable * TAX_RATE;
   const net = taxable - tax;
-  return { hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, extra, taxable, tax, net };
+  return { grossHours, breakHours, hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, extra, taxable, tax, net };
 }
 
 // ---------- Business trip helpers ----------
