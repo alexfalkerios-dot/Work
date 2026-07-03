@@ -69,6 +69,51 @@ const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн'
 const WEEKDAY_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const WEEKDAY_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 
+// ---------- Общие утилиты ----------
+function getPersonConfig(person, settings) {
+  const isP1 = person === 'p1';
+  return {
+    key: person,
+    name: isP1 ? settings.p1Name : settings.p2Name,
+    rate: isP1 ? settings.p1Rate : settings.p2Rate,
+    color: isP1 ? P1_COLOR : P2_COLOR,
+    onTrip: isP1 ? settings.p1OnTrip : settings.p2OnTrip,
+  };
+}
+
+function parseMonthKey(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  return { year: y, month: m };
+}
+
+function parseDateStr(dateStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return { year: y, month: m, day: d };
+}
+
+function initial(name) {
+  return name.charAt(0).toUpperCase();
+}
+
+function createPersister(storageKey, stateSetter, errorSetter) {
+  return async (next) => {
+    stateSetter(next);
+    try {
+      const result = await window.storage.set(storageKey, JSON.stringify(next), false);
+      if (result === false) errorSetter('Не удалось сохранить. Попробуйте ещё раз.');
+    } catch (e) {
+      errorSetter('Не удалось сохранить. Проверьте соединение.');
+    }
+  };
+}
+
+const INPUT_CLASS = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100';
+const INPUT_CLASS_AMBER = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-amber-600 focus:ring-2 focus:ring-amber-100';
+const INPUT_CLASS_VIOLET = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-violet-600 focus:ring-2 focus:ring-violet-100';
+const INPUT_CLASS_TEXT = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-teal-600 focus:ring-2 focus:ring-teal-100';
+const INPUT_CLASS_TEXT_AMBER = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-amber-600 focus:ring-2 focus:ring-amber-100';
+const INPUT_CLASS_BREAK = 'w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100';
+
 // ---------- Даты и время ----------
 function pad2(n) { return String(n).padStart(2, '0'); }
 
@@ -93,20 +138,20 @@ function formatDateShort(dateStr) {
   return `${d}.${m}`;
 }
 function monthLabel(mk) {
-  const [y, m] = mk.split('-').map(Number);
-  return `${MONTHS_NOM[m - 1]} ${y}`;
+  const { year, month } = parseMonthKey(mk);
+  return `${MONTHS_NOM[month - 1]} ${year}`;
 }
 function monthShortLabel(mk) {
-  const [y, m] = mk.split('-').map(Number);
-  return `${MONTHS_SHORT[m - 1]} ${String(y).slice(2)}`;
+  const { year, month } = parseMonthKey(mk);
+  return `${MONTHS_SHORT[month - 1]} ${String(year).slice(2)}`;
 }
 function genId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 function dayOfWeek(dateStr) {
   if (!dateStr) return null;
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, m - 1, d).getDay(); // 0 = вс ... 6 = сб
+  const { year, month, day } = parseDateStr(dateStr);
+  return new Date(year, month - 1, day).getDay(); // 0 = вс ... 6 = сб
 }
 function isWeekendDate(dateStr) {
   const dow = dayOfWeek(dateStr);
@@ -125,18 +170,18 @@ function weekdaysInMonth(year, month) {
   return count;
 }
 function monthBounds(monthKey) {
-  const [y, m] = monthKey.split('-').map(Number);
-  return { start: new Date(y, m - 1, 1), end: new Date(y, m - 1, daysInMonth(y, m)) };
+  const { year, month } = parseMonthKey(monthKey);
+  return { start: new Date(year, month - 1, 1), end: new Date(year, month - 1, daysInMonth(year, month)) };
 }
 function diffDaysInclusive(a, b) {
   return Math.round((b - a) / 86400000) + 1;
 }
 function monthRange(startKey, endKey) {
-  const [sy, sm] = startKey.split('-').map(Number);
-  const [ey, em] = endKey.split('-').map(Number);
+  const s = parseMonthKey(startKey);
+  const e = parseMonthKey(endKey);
   const out = [];
-  let y = sy, m = sm, guard = 0;
-  while ((y < ey || (y === ey && m <= em)) && guard < 600) {
+  let y = s.year, m = s.month, guard = 0;
+  while ((y < e.year || (y === e.year && m <= e.month)) && guard < 600) {
     out.push(`${y}-${pad2(m)}`);
     m += 1;
     if (m > 12) { m = 1; y += 1; }
@@ -213,12 +258,12 @@ function computeShiftPay(shift) {
 function perDiemDaysForMonth(monthKey, tripStart, tripEnd) {
   if (!tripStart) return 0;
   const { start: monthStart, end: monthEnd } = monthBounds(monthKey);
-  const [ty, tm, td] = tripStart.split('-').map(Number);
-  const ts = new Date(ty, tm - 1, td);
+  const t = parseDateStr(tripStart);
+  const ts = new Date(t.year, t.month - 1, t.day);
   let te = monthEnd;
   if (tripEnd) {
-    const [ey, em, ed] = tripEnd.split('-').map(Number);
-    te = new Date(ey, em - 1, ed);
+    const e = parseDateStr(tripEnd);
+    te = new Date(e.year, e.month - 1, e.day);
   }
   const overlapStart = ts > monthStart ? ts : monthStart;
   const overlapEnd = te < monthEnd ? te : monthEnd;
@@ -228,12 +273,12 @@ function perDiemDaysForMonth(monthKey, tripStart, tripEnd) {
 function isFullMonthInTrip(monthKey, tripStart, tripEnd) {
   if (!tripStart) return false;
   const { start: monthStart, end: monthEnd } = monthBounds(monthKey);
-  const [ty, tm, td] = tripStart.split('-').map(Number);
-  const ts = new Date(ty, tm - 1, td);
+  const t = parseDateStr(tripStart);
+  const ts = new Date(t.year, t.month - 1, t.day);
   if (monthStart < ts) return false;
   if (tripEnd) {
-    const [ey, em, ed] = tripEnd.split('-').map(Number);
-    const te = new Date(ey, em - 1, ed);
+    const e = parseDateStr(tripEnd);
+    const te = new Date(e.year, e.month - 1, e.day);
     if (monthEnd > te) return false;
   }
   return true;
@@ -241,8 +286,7 @@ function isFullMonthInTrip(monthKey, tripStart, tripEnd) {
 
 // ---------- Расчёт за месяц на человека ----------
 function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
-  const rate = person === 'p1' ? settings.p1Rate : settings.p2Rate;
-  const onTrip = person === 'p1' ? settings.p1OnTrip : settings.p2OnTrip;
+  const pc = getPersonConfig(person, settings);
   const personShifts = shifts.filter((s) => s.person === person && s.date && s.date.slice(0, 7) === monthKey);
 
   let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, extra = 0;
@@ -258,11 +302,11 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
     extra += p.extra;
   });
 
-  const [y, m] = monthKey.split('-').map(Number);
+  const { year: y, month: m } = parseMonthKey(monthKey);
   const wkd = weekdaysInMonth(y, m);
   const holidays = (monthMeta && monthMeta[monthKey] && monthMeta[monthKey].holidays) || 0;
   const norm = Math.max(0, wkd - holidays) * 8;
-  const effectiveRate = hours > 0 ? base / hours : rate;
+  const effectiveRate = hours > 0 ? base / hours : pc.rate;
 
   const highSeasonBonus = hours > HIGH_SEASON_THRESHOLD ? HIGH_SEASON_BONUS : 0;
   const flexBonus = norm > 0 ? Math.min(hours / norm, 1) * FLEX_BONUS_CAP : 0;
@@ -275,8 +319,8 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const tax = taxableGross * TAX_RATE;
   const netTaxable = taxableGross - tax;
 
-  const travelBonus = onTrip && isFullMonthInTrip(monthKey, settings.tripStart, settings.tripEnd) ? TRAVEL_WORK_BONUS : 0;
-  const perDiemDays = onTrip ? perDiemDaysForMonth(monthKey, settings.tripStart, settings.tripEnd) : 0;
+  const travelBonus = pc.onTrip && isFullMonthInTrip(monthKey, settings.tripStart, settings.tripEnd) ? TRAVEL_WORK_BONUS : 0;
+  const perDiemDays = pc.onTrip ? perDiemDaysForMonth(monthKey, settings.tripStart, settings.tripEnd) : 0;
   const perDiem = perDiemDays * PER_DIEM_RATE;
   const nonTaxable = travelBonus + perDiem;
   const netTotal = netTaxable + nonTaxable;
@@ -350,33 +394,9 @@ export default function App() {
     })();
   }, []);
 
-  const persistShifts = useCallback(async (next) => {
-    setShifts(next);
-    try {
-      const result = await window.storage.set(SHIFTS_KEY, JSON.stringify(next), false);
-      setSaveError(result ? '' : 'Не удалось сохранить. Попробуйте ещё раз.');
-    } catch (e) {
-      setSaveError('Не удалось сохранить. Проверьте соединение.');
-    }
-  }, []);
-
-  const persistSettings = useCallback(async (next) => {
-    setSettings(next);
-    try {
-      await window.storage.set(SETTINGS_KEY, JSON.stringify(next), false);
-    } catch (e) {
-      setSaveError('Не удалось сохранить настройки.');
-    }
-  }, []);
-
-  const persistMonthMeta = useCallback(async (next) => {
-    setMonthMeta(next);
-    try {
-      await window.storage.set(MONTH_META_KEY, JSON.stringify(next), false);
-    } catch (e) {
-      setSaveError('Не удалось сохранить настройки месяца.');
-    }
-  }, []);
+  const persistShifts = useCallback(createPersister(SHIFTS_KEY, setShifts, setSaveError), []);
+  const persistSettings = useCallback(createPersister(SETTINGS_KEY, setSettings, setSaveError), []);
+  const persistMonthMeta = useCallback(createPersister(MONTH_META_KEY, setMonthMeta, setSaveError), []);
 
   const updateHolidays = useCallback((monthKey, value) => {
     const n = Math.max(0, parseInt(value, 10) || 0);
@@ -397,7 +417,7 @@ export default function App() {
       breakMin: String(settings.defaultBreakMin ?? ''),
       quarter1Min: String(settings.defaultQuarterMin ?? ''),
       quarter2Min: String(settings.defaultQuarterMin ?? ''),
-      rate: String((p === 'p1' ? settings.p1Rate : settings.p2Rate) ?? ''),
+      rate: String(getPersonConfig(p, settings).rate ?? ''),
       extraAmount: '',
       extraNote: '',
       note: '',
@@ -408,9 +428,9 @@ export default function App() {
 
   function handlePersonSelect(person) {
     setForm((f) => {
-      const oldDefault = f.person === 'p1' ? settings.p1Rate : settings.p2Rate;
+      const oldDefault = getPersonConfig(f.person, settings).rate;
       const usingDefault = f.rate === '' || Number(f.rate) === Number(oldDefault);
-      const newDefault = person === 'p1' ? settings.p1Rate : settings.p2Rate;
+      const newDefault = getPersonConfig(person, settings).rate;
       return { ...f, person, rate: usingDefault ? String(newDefault ?? '') : f.rate };
     });
   }
@@ -730,6 +750,33 @@ function LineItem({ label, value, accent, bold }) {
   );
 }
 
+function PersonSelector({ settings, selected, onSelect }) {
+  const PERSON_STYLES = {
+    p1: { activeBorder: 'border-teal-700', activeBg: 'bg-teal-50', activeText: 'text-teal-800' },
+    p2: { activeBorder: 'border-violet-700', activeBg: 'bg-violet-50', activeText: 'text-violet-800' },
+  };
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {['p1', 'p2'].map((p) => {
+        const pc = getPersonConfig(p, settings);
+        const st = PERSON_STYLES[p];
+        const active = selected === p;
+        return (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onSelect(p)}
+            className={`flex items-center gap-2 justify-center rounded-xl py-3 border-2 transition-colors ${active ? `${st.activeBorder} ${st.activeBg}` : 'border-stone-200 bg-white'}`}
+          >
+            <PersonStamp letter={initial(pc.name)} color={pc.color} size="sm" />
+            <span className={`text-sm font-medium ${active ? st.activeText : 'text-stone-600'}`}>{pc.name}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError, preview, editingId, onCancelEdit }) {
   const [showExtra, setShowExtra] = useState(!!(form.extraAmount || form.extraNote));
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -744,24 +791,7 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
-        <button
-          type="button"
-          onClick={() => onPersonSelect('p1')}
-          className={`flex items-center gap-2 justify-center rounded-xl py-3 border-2 transition-colors ${form.person === 'p1' ? 'border-teal-700 bg-teal-50' : 'border-stone-200 bg-white'}`}
-        >
-          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
-          <span className={`text-sm font-medium ${form.person === 'p1' ? 'text-teal-800' : 'text-stone-600'}`}>{settings.p1Name}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => onPersonSelect('p2')}
-          className={`flex items-center gap-2 justify-center rounded-xl py-3 border-2 transition-colors ${form.person === 'p2' ? 'border-violet-700 bg-violet-50' : 'border-stone-200 bg-white'}`}
-        >
-          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
-          <span className={`text-sm font-medium ${form.person === 'p2' ? 'text-violet-800' : 'text-stone-600'}`}>{settings.p2Name}</span>
-        </button>
-      </div>
+      <PersonSelector settings={settings} selected={form.person} onSelect={onPersonSelect} />
 
       <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-4">
         <Field label="Дата смены">
@@ -769,7 +799,7 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
             type="date"
             value={form.date}
             onChange={update('date')}
-            className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+            className={INPUT_CLASS}
           />
         </Field>
         {form.date && (
@@ -783,7 +813,7 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               type="time"
               value={form.startTime}
               onChange={update('startTime')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className={INPUT_CLASS}
             />
           </Field>
           <Field label="Конец смены">
@@ -791,7 +821,7 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               type="time"
               value={form.endTime}
               onChange={update('endTime')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className={INPUT_CLASS}
             />
           </Field>
         </div>
@@ -801,17 +831,17 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Брейк" aria-label="Брейк, минут"
               value={form.breakMin} onChange={update('breakMin')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className={INPUT_CLASS_BREAK}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 1" aria-label="Пятнашка 1, минут"
               value={form.quarter1Min} onChange={update('quarter1Min')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className={INPUT_CLASS_BREAK}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 2" aria-label="Пятнашка 2, минут"
               value={form.quarter2Min} onChange={update('quarter2Min')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className={INPUT_CLASS_BREAK}
             />
           </div>
           <div className="grid grid-cols-3 gap-2 mt-1">
@@ -824,7 +854,7 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
           <input
             type="number" inputMode="decimal" min="0" step="1" placeholder="231"
             value={form.rate} onChange={update('rate')}
-            className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+            className={INPUT_CLASS}
           />
         </Field>
         {preview.grossHours > 0 && (
@@ -858,14 +888,14 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               <input
                 type="number" inputMode="decimal" step="1" placeholder="0"
                 value={form.extraAmount} onChange={update('extraAmount')}
-                className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+                className={INPUT_CLASS_AMBER}
               />
             </Field>
             <Field label="За что">
               <input
                 type="text" placeholder="Напр. разовая доплата"
                 value={form.extraNote} onChange={update('extraNote')}
-                className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+                className={INPUT_CLASS_TEXT_AMBER}
               />
             </Field>
           </div>
@@ -976,14 +1006,13 @@ function TableView({ groups, settings, filterPerson, setFilterPerson, filterMont
 
 function ShiftRow({ shift, settings, onEdit, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const color = shift.person === 'p1' ? P1_COLOR : P2_COLOR;
-  const name = shift.person === 'p1' ? settings.p1Name : settings.p2Name;
+  const pc = getPersonConfig(shift.person, settings);
   const pay = computeShiftPay(shift);
   const weekend = shift.date ? isWeekendDate(shift.date) : false;
   const hasTimes = shift.startTime && shift.endTime;
   return (
     <div className="flex items-center gap-3 px-3.5 py-3">
-      <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+      <PersonStamp letter={initial(pc.name)} color={pc.color} size="sm" />
       <button type="button" onClick={onEdit} className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-2 text-sm text-stone-800 flex-wrap">
           <span className={`font-mono-num ${weekend ? 'text-violet-700 font-medium' : ''}`}>
@@ -1028,7 +1057,7 @@ function PayslipCard({ summary, name, color, onHolidaysChange }) {
     <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100" style={{ backgroundColor: `${color}0d` }}>
         <div className="flex items-center gap-2">
-          <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+          <PersonStamp letter={initial(name)} color={color} size="sm" />
           <span className="text-sm font-medium text-stone-800">{name}</span>
         </div>
         <span className="font-mono-num text-xs text-stone-500">{formatHours(s.hours)} · норма {s.norm}ч</span>
@@ -1085,8 +1114,7 @@ function StatsView({ overallStats, settings, shiftsCount, availableMonths, month
     );
   }
   const monthData = monthSummaries[statsMonth];
-  const personName = statsPerson === 'p1' ? settings.p1Name : settings.p2Name;
-  const personColor = statsPerson === 'p1' ? P1_COLOR : P2_COLOR;
+  const pc = getPersonConfig(statsPerson, settings);
 
   return (
     <div className="pt-1 space-y-5">
@@ -1120,8 +1148,8 @@ function StatsView({ overallStats, settings, shiftsCount, availableMonths, month
         {monthData && (
           <PayslipCard
             summary={monthData[statsPerson]}
-            name={personName}
-            color={personColor}
+            name={pc.name}
+            color={pc.color}
             onHolidaysChange={(v) => onHolidaysChange(statsMonth, v)}
           />
         )}
@@ -1178,13 +1206,13 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Имя (человек 1)">
                 <input
                   type="text" value={draft.p1Name} onChange={update('p1Name')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS_TEXT}
                 />
               </Field>
               <Field label="Ставка, ₽/ч">
                 <input
                   type="number" inputMode="decimal" min="0" value={draft.p1Rate} onChange={update('p1Rate')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS}
                 />
               </Field>
             </div>
@@ -1192,13 +1220,13 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Имя (человек 2)">
                 <input
                   type="text" value={draft.p2Name} onChange={update('p2Name')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-violet-600 focus:ring-2 focus:ring-violet-100"
+                  className={INPUT_CLASS_VIOLET}
                 />
               </Field>
               <Field label="Ставка, ₽/ч">
                 <input
                   type="number" inputMode="decimal" min="0" value={draft.p2Rate} onChange={update('p2Rate')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-violet-600 focus:ring-2 focus:ring-violet-100"
+                  className={INPUT_CLASS_VIOLET}
                 />
               </Field>
             </div>
@@ -1212,13 +1240,13 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Дата начала">
                 <input
                   type="date" value={draft.tripStart} onChange={update('tripStart')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS}
                 />
               </Field>
               <Field label="Окончание (если есть)">
                 <input
                   type="date" value={draft.tripEnd} onChange={update('tripEnd')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS}
                 />
               </Field>
             </div>
@@ -1239,13 +1267,13 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Брейк, мин">
                 <input
                   type="number" inputMode="numeric" min="0" step="5" value={draft.defaultBreakMin} onChange={update('defaultBreakMin')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS}
                 />
               </Field>
               <Field label="Каждая пятнашка, мин">
                 <input
                   type="number" inputMode="numeric" min="0" step="5" value={draft.defaultQuarterMin} onChange={update('defaultQuarterMin')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className={INPUT_CLASS}
                 />
               </Field>
             </div>
