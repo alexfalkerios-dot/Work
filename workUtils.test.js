@@ -2,12 +2,13 @@ import {
   TAX_RATE, RELIABILITY_RATE, NIGHT_MINOR_RATE, NIGHT_MAJOR_RATE,
   HIGH_SEASON_THRESHOLD, HIGH_SEASON_BONUS, FLEX_BONUS_CAP, WEEKEND_BONUS,
   TRAVEL_WORK_BONUS, PER_DIEM_RATE, OT_TIER1_HOURS, OT_TIER1_MULT, OT_TIER2_MULT,
+  TRUCK_BONUS, GARBAGE_BONUS,
   DEFAULT_SETTINGS,
   pad2, formatMoney, formatHours, formatDateShort,
   monthLabel, monthShortLabel, dayOfWeek, isWeekendDate,
   daysInMonth, weekdaysInMonth, monthBounds, diffDaysInclusive,
   monthRange, toMinutes, shiftHoursOf, nightHoursOf,
-  normalizeShift, computeShiftPay,
+  normalizeShift, normalizeScheduleEntry, computeShiftPay,
   perDiemDaysForMonth, isFullMonthInTrip, computeMonthSummary,
 } from './workUtils.js';
 
@@ -296,6 +297,45 @@ describe('normalizeShift', () => {
     expect(s.quarter1Min).toBe(15);
     expect(s.quarter2Min).toBe(15);
   });
+  it('defaults truckReception and garbageDuty to false', () => {
+    const s = normalizeShift({ date: '2026-07-01' });
+    expect(s.truckReception).toBe(false);
+    expect(s.garbageDuty).toBe(false);
+  });
+  it('preserves truckReception and garbageDuty when provided', () => {
+    const s = normalizeShift({ date: '2026-07-01', truckReception: true, garbageDuty: true });
+    expect(s.truckReception).toBe(true);
+    expect(s.garbageDuty).toBe(true);
+  });
+});
+
+// =====================================================================
+// 3b. normalizeScheduleEntry
+// =====================================================================
+
+describe('normalizeScheduleEntry', () => {
+  it('defaults person to p1', () => {
+    const e = normalizeScheduleEntry({ date: '2026-07-01' });
+    expect(e.person).toBe('p1');
+  });
+  it('preserves p2', () => {
+    const e = normalizeScheduleEntry({ person: 'p2', date: '2026-07-01' });
+    expect(e.person).toBe('p2');
+  });
+  it('defaults optional fields', () => {
+    const e = normalizeScheduleEntry({ date: '2026-07-01' });
+    expect(e.startTime).toBe('');
+    expect(e.endTime).toBe('');
+    expect(e.note).toBe('');
+    expect(e.id).toBe('generated-id');
+  });
+  it('preserves provided fields', () => {
+    const e = normalizeScheduleEntry({ id: 'x', date: '2026-07-01', person: 'p1', startTime: '08:00', endTime: '16:00', note: 'test' });
+    expect(e.id).toBe('x');
+    expect(e.startTime).toBe('08:00');
+    expect(e.endTime).toBe('16:00');
+    expect(e.note).toBe('test');
+  });
 });
 
 // =====================================================================
@@ -395,6 +435,32 @@ describe('computeShiftPay', () => {
   it('no weekend bonus on weekday', () => {
     const pay = computeShiftPay(makeShift({ date: '2026-07-06' })); // Monday
     expect(pay.weekendBonus).toBe(0);
+  });
+
+  it('applies truck bonus when truckReception is true', () => {
+    const pay = computeShiftPay(makeShift({ truckReception: true }));
+    expect(pay.truckBonus).toBe(1150);
+  });
+  it('no truck bonus when truckReception is false', () => {
+    const pay = computeShiftPay(makeShift({ truckReception: false }));
+    expect(pay.truckBonus).toBe(0);
+  });
+  it('no truck bonus when hours are 0', () => {
+    const pay = computeShiftPay({ date: '2026-07-06', startTime: '', endTime: '', legacyHours: 0, rate: 231, truckReception: true, extraAmount: 0 });
+    expect(pay.truckBonus).toBe(0);
+  });
+  it('applies garbage bonus when garbageDuty is true', () => {
+    const pay = computeShiftPay(makeShift({ garbageDuty: true }));
+    expect(pay.garbageBonus).toBe(100);
+  });
+  it('no garbage bonus when garbageDuty is false', () => {
+    const pay = computeShiftPay(makeShift({ garbageDuty: false }));
+    expect(pay.garbageBonus).toBe(0);
+  });
+  it('includes truck and garbage bonuses in taxable total', () => {
+    const pay = computeShiftPay(makeShift({ truckReception: true, garbageDuty: true }));
+    const payNone = computeShiftPay(makeShift());
+    expect(pay.taxable).toBe(payNone.taxable + 1150 + 100);
   });
 
   it('includes extra amount in taxable total', () => {
@@ -730,6 +796,30 @@ describe('computeMonthSummary', () => {
     expect(s.hours).toBe(16);
     expect(s.extra).toBe(100);
   });
+
+  it('aggregates truck and garbage bonuses across shifts', () => {
+    const shifts = [
+      { person: 'p1', date: '2026-07-06', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0, truckReception: true, garbageDuty: false },
+      { person: 'p1', date: '2026-07-07', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0, truckReception: false, garbageDuty: true },
+      { person: 'p1', date: '2026-07-08', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0, truckReception: true, garbageDuty: true },
+    ];
+    const s = computeMonthSummary('2026-07', 'p1', shifts, settings, {});
+    expect(s.truckBonus).toBe(1150 * 2);
+    expect(s.truckCount).toBe(2);
+    expect(s.garbageBonus).toBe(100 * 2);
+    expect(s.garbageCount).toBe(2);
+  });
+
+  it('includes truck and garbage bonuses in taxableGross', () => {
+    const shifts = [
+      { person: 'p1', date: '2026-07-06', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0, truckReception: true, garbageDuty: true },
+    ];
+    const s = computeMonthSummary('2026-07', 'p1', shifts, settings, {});
+    const sNoBonus = computeMonthSummary('2026-07', 'p1', [
+      { person: 'p1', date: '2026-07-06', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0 },
+    ], settings, {});
+    expect(s.taxableGross).toBe(sNoBonus.taxableGross + 1150 + 100);
+  });
 });
 
 // =====================================================================
@@ -775,6 +865,12 @@ describe('constants', () => {
   });
   it('OT_TIER2_MULT is 1.0', () => {
     expect(OT_TIER2_MULT).toBe(1.0);
+  });
+  it('TRUCK_BONUS is 1150', () => {
+    expect(TRUCK_BONUS).toBe(1150);
+  });
+  it('GARBAGE_BONUS is 100', () => {
+    expect(GARBAGE_BONUS).toBe(100);
   });
   it('DEFAULT_SETTINGS has expected shape', () => {
     expect(DEFAULT_SETTINGS).toHaveProperty('p1Name');

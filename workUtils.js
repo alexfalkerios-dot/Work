@@ -14,6 +14,8 @@ const PER_DIEM_RATE = 500;
 const OT_TIER1_HOURS = 2;
 const OT_TIER1_MULT = 0.5;
 const OT_TIER2_MULT = 1.0;
+const TRUCK_BONUS = 1150;
+const GARBAGE_BONUS = 100;
 
 const DEFAULT_SETTINGS = {
   p1Name: 'Я',
@@ -142,6 +144,8 @@ function normalizeShift(raw) {
     breakMin: raw.breakMin || 0,
     quarter1Min: raw.quarter1Min || 0,
     quarter2Min: raw.quarter2Min || 0,
+    truckReception: !!raw.truckReception,
+    garbageDuty: !!raw.garbageDuty,
     rate: raw.rate || 0,
     extraAmount: raw.extraAmount ?? raw.bonus ?? 0,
     extraNote: raw.extraNote ?? raw.bonusNote ?? '',
@@ -164,11 +168,25 @@ function computeShiftPay(shift) {
   const reliabilityBonus = hours * rate * RELIABILITY_RATE;
   const weekend = shift.date ? isWeekendDate(shift.date) : false;
   const weekendBonus = weekend && hours > 0 ? WEEKEND_BONUS : 0;
+  const truckBonus = shift.truckReception && hours > 0 ? TRUCK_BONUS : 0;
+  const garbageBonus = shift.garbageDuty && hours > 0 ? GARBAGE_BONUS : 0;
   const extra = shift.extraAmount || 0;
-  const taxable = base + nightBonus + reliabilityBonus + weekendBonus + extra;
+  const taxable = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra;
   const tax = taxable * TAX_RATE;
   const net = taxable - tax;
-  return { grossHours, breakHours, hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, extra, taxable, tax, net };
+  return { grossHours, breakHours, hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, truckBonus, garbageBonus, extra, taxable, tax, net };
+}
+
+function normalizeScheduleEntry(raw) {
+  return {
+    id: raw.id || 'generated-id',
+    person: raw.person === 'p2' ? 'p2' : 'p1',
+    date: raw.date,
+    startTime: raw.startTime || '',
+    endTime: raw.endTime || '',
+    note: raw.note || '',
+    createdAt: raw.createdAt || 0,
+  };
 }
 
 // ---------- Business trip helpers ----------
@@ -208,7 +226,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const onTrip = person === 'p1' ? settings.p1OnTrip : settings.p2OnTrip;
   const personShifts = shifts.filter((s) => s.person === person && s.date && s.date.slice(0, 7) === monthKey);
 
-  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, extra = 0;
+  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
   personShifts.forEach((s) => {
     const p = computeShiftPay(s);
     hours += p.hours;
@@ -218,6 +236,10 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
     reliabilityBonus += p.reliabilityBonus;
     weekendBonus += p.weekendBonus;
     if (p.weekendBonus > 0) weekendCount += 1;
+    truckBonus += p.truckBonus;
+    if (p.truckBonus > 0) truckCount += 1;
+    garbageBonus += p.garbageBonus;
+    if (p.garbageBonus > 0) garbageCount += 1;
     extra += p.extra;
   });
 
@@ -234,7 +256,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const ot2 = Math.max(0, otHours - OT_TIER1_HOURS);
   const overtimePremium = ot1 * effectiveRate * OT_TIER1_MULT + ot2 * effectiveRate * OT_TIER2_MULT;
 
-  const taxableGross = base + nightBonus + reliabilityBonus + weekendBonus + extra + highSeasonBonus + flexBonus + overtimePremium;
+  const taxableGross = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra + highSeasonBonus + flexBonus + overtimePremium;
   const tax = taxableGross * TAX_RATE;
   const netTaxable = taxableGross - tax;
 
@@ -246,7 +268,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
 
   return {
     monthKey, person, hours, nightHours, wkd, holidays, norm,
-    base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, extra,
+    base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, truckBonus, truckCount, garbageBonus, garbageCount, extra,
     highSeasonBonus, flexBonus, otHours, overtimePremium,
     taxableGross, tax, netTaxable,
     travelBonus, perDiemDays, perDiem, nonTaxable, netTotal,
@@ -268,6 +290,8 @@ export {
   OT_TIER1_HOURS,
   OT_TIER1_MULT,
   OT_TIER2_MULT,
+  TRUCK_BONUS,
+  GARBAGE_BONUS,
   DEFAULT_SETTINGS,
   MONTHS_NOM,
   MONTHS_SHORT,
@@ -288,6 +312,7 @@ export {
   shiftHoursOf,
   nightHoursOf,
   normalizeShift,
+  normalizeScheduleEntry,
   computeShiftPay,
   perDiemDaysForMonth,
   isFullMonthInTrip,

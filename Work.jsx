@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, List, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Plane, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, List, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Plane, ChevronDown, ChevronUp, Calendar, Truck, Trash } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 /*
@@ -11,6 +11,8 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
                  если > половины смены попадает в 22:00–08:00 → +30% на ВСЮ смену
    - Премия надёжности: 15% × часы × ставка
    - Премия выходного дня: 560 ₽, если дата смены — суббота или воскресенье
+   - Приёмка машины: 1150 ₽, если отмечено на смене
+   - Выгрузка мусора: 100 ₽, если отмечено на смене
    Всё это облагается НДФЛ 13%.
 
   За месяц (считается по сумме часов за месяц на человека):
@@ -26,12 +28,15 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsive
    - Командировочные: 500 ₽ за каждый день командировки (даже нерабочий)
    - Премия «Путешествуй и работай»: 3000 ₽ за месяц, если ВЕСЬ месяц полностью
      попадает в период командировки
+
+  Расписание (вкладка «Расписание») — отдельные данные, в расчёт не идут, только для просмотра графика.
 */
 
 // ---------- Хранилище ----------
 const SHIFTS_KEY = 'shifts';
 const SETTINGS_KEY = 'settings';
 const MONTH_META_KEY = 'monthMeta';
+const SCHEDULE_KEY = 'scheduleEntries';
 
 // ---------- Константы начислений ----------
 const TAX_RATE = 0.13;
@@ -47,6 +52,8 @@ const PER_DIEM_RATE = 500;
 const OT_TIER1_HOURS = 2;
 const OT_TIER1_MULT = 0.5;
 const OT_TIER2_MULT = 1.0;
+const TRUCK_BONUS = 1150;
+const GARBAGE_BONUS = 100;
 
 const DEFAULT_SETTINGS = {
   p1Name: 'Я',
@@ -68,6 +75,59 @@ const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель'
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAY_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const WEEKDAY_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+
+// ---------- iOS 27 Liquid Glass — токены дизайна ----------
+function hexToRgba(hex, alpha) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+const SYSTEM_SANS = "-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif";
+const GLASS_PANEL = {
+  backgroundColor: 'rgba(255,255,255,0.6)',
+  backdropFilter: 'blur(24px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(24px) saturate(180%)',
+  border: '1px solid rgba(255,255,255,0.7)',
+  boxShadow: '0 10px 32px -12px rgba(30,41,59,0.16), inset 0 1px 0 rgba(255,255,255,0.55)',
+};
+const GLASS_PANEL_TIGHT = { ...GLASS_PANEL, boxShadow: '0 6px 20px -10px rgba(30,41,59,0.14), inset 0 1px 0 rgba(255,255,255,0.5)' };
+const GLASS_WELL = {
+  backgroundColor: 'rgba(255,255,255,0.55)',
+  border: '1px solid rgba(148,163,184,0.3)',
+  boxShadow: 'inset 0 1px 2px rgba(15,23,42,0.05)',
+};
+const GLASS_NAV = {
+  backgroundColor: 'rgba(255,255,255,0.7)',
+  backdropFilter: 'blur(30px) saturate(180%)',
+  WebkitBackdropFilter: 'blur(30px) saturate(180%)',
+  border: '1px solid rgba(255,255,255,0.8)',
+  boxShadow: '0 16px 40px -10px rgba(30,41,59,0.25), inset 0 1px 0 rgba(255,255,255,0.6)',
+};
+const GLASS_DARK = {
+  backgroundColor: 'rgba(20,20,30,0.75)',
+  backdropFilter: 'blur(22px) saturate(160%)',
+  WebkitBackdropFilter: 'blur(22px) saturate(160%)',
+  border: '1px solid rgba(255,255,255,0.14)',
+  boxShadow: '0 10px 30px -8px rgba(15,23,42,0.4), inset 0 1px 0 rgba(255,255,255,0.1)',
+};
+function tintStyle(hex, alpha) {
+  const a = alpha ?? 0.12;
+  return { backgroundColor: hexToRgba(hex, a), border: `1px solid ${hexToRgba(hex, a + 0.22)}` };
+}
+function specularButton(hex) {
+  return {
+    backgroundImage: `linear-gradient(180deg, rgba(255,255,255,0.4), rgba(255,255,255,0) 50%), linear-gradient(135deg, ${hex}, ${hexToRgba(hex, 0.82)})`,
+    boxShadow: `0 10px 26px -8px ${hexToRgba(hex, 0.55)}, inset 0 1px 0 rgba(255,255,255,0.45)`,
+  };
+}
+const BG_GRADIENT = `
+  radial-gradient(ellipse 60% 50% at 10% 6%, rgba(15,118,110,0.28), transparent 60%),
+  radial-gradient(ellipse 55% 45% at 90% 10%, rgba(109,40,217,0.24), transparent 60%),
+  radial-gradient(ellipse 65% 55% at 50% 100%, rgba(217,119,6,0.18), transparent 60%),
+  linear-gradient(165deg, #eef2f9 0%, #f0edfa 45%, #fdf1f2 100%)
+`;
 
 // ---------- Даты и время ----------
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -178,6 +238,8 @@ function normalizeShift(raw) {
     breakMin: raw.breakMin || 0,
     quarter1Min: raw.quarter1Min || 0,
     quarter2Min: raw.quarter2Min || 0,
+    truckReception: !!raw.truckReception,
+    garbageDuty: !!raw.garbageDuty,
     rate: raw.rate || 0,
     extraAmount: raw.extraAmount ?? raw.bonus ?? 0,
     extraNote: raw.extraNote ?? raw.bonusNote ?? '',
@@ -202,11 +264,13 @@ function computeShiftPay(shift) {
   const reliabilityBonus = hours * rate * RELIABILITY_RATE;
   const weekend = shift.date ? isWeekendDate(shift.date) : false;
   const weekendBonus = weekend && hours > 0 ? WEEKEND_BONUS : 0;
+  const truckBonus = shift.truckReception && hours > 0 ? TRUCK_BONUS : 0;
+  const garbageBonus = shift.garbageDuty && hours > 0 ? GARBAGE_BONUS : 0;
   const extra = shift.extraAmount || 0;
-  const taxable = base + nightBonus + reliabilityBonus + weekendBonus + extra;
+  const taxable = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra;
   const tax = taxable * TAX_RATE;
   const net = taxable - tax;
-  return { grossHours, breakHours, hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, extra, taxable, tax, net };
+  return { grossHours, breakHours, hours, night, isMajorNight, base, nightBonus, reliabilityBonus, weekendBonus, truckBonus, garbageBonus, extra, taxable, tax, net };
 }
 
 // ---------- Командировка: премии по календарю ----------
@@ -245,7 +309,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const onTrip = person === 'p1' ? settings.p1OnTrip : settings.p2OnTrip;
   const personShifts = shifts.filter((s) => s.person === person && s.date && s.date.slice(0, 7) === monthKey);
 
-  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, extra = 0;
+  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
   personShifts.forEach((s) => {
     const p = computeShiftPay(s);
     hours += p.hours;
@@ -255,6 +319,10 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
     reliabilityBonus += p.reliabilityBonus;
     weekendBonus += p.weekendBonus;
     if (p.weekendBonus > 0) weekendCount += 1;
+    truckBonus += p.truckBonus;
+    if (p.truckBonus > 0) truckCount += 1;
+    garbageBonus += p.garbageBonus;
+    if (p.garbageBonus > 0) garbageCount += 1;
     extra += p.extra;
   });
 
@@ -271,7 +339,7 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const ot2 = Math.max(0, otHours - OT_TIER1_HOURS);
   const overtimePremium = ot1 * effectiveRate * OT_TIER1_MULT + ot2 * effectiveRate * OT_TIER2_MULT;
 
-  const taxableGross = base + nightBonus + reliabilityBonus + weekendBonus + extra + highSeasonBonus + flexBonus + overtimePremium;
+  const taxableGross = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra + highSeasonBonus + flexBonus + overtimePremium;
   const tax = taxableGross * TAX_RATE;
   const netTaxable = taxableGross - tax;
 
@@ -283,11 +351,24 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
 
   return {
     monthKey, person, hours, nightHours, wkd, holidays, norm,
-    base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, extra,
+    base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, truckBonus, truckCount, garbageBonus, garbageCount, extra,
     highSeasonBonus, flexBonus, otHours, overtimePremium,
     taxableGross, tax, netTaxable,
     travelBonus, perDiemDays, perDiem, nonTaxable, netTotal,
     shiftsCount: personShifts.length,
+  };
+}
+
+// ---------- Расписание (просмотр графика, в расчёт премий не входит) ----------
+function normalizeScheduleEntry(raw) {
+  return {
+    id: raw.id || genId(),
+    person: raw.person === 'p2' ? 'p2' : 'p1',
+    date: raw.date,
+    startTime: raw.startTime || '',
+    endTime: raw.endTime || '',
+    note: raw.note || '',
+    createdAt: raw.createdAt || Date.now(),
   };
 }
 
@@ -307,12 +388,18 @@ export default function App() {
   const [filterMonth, setFilterMonth] = useState('all');
   const [statsPerson, setStatsPerson] = useState('p1');
   const [statsMonth, setStatsMonth] = useState('');
+  const [scheduleEntries, setScheduleEntries] = useState([]);
+  const [scheduleForm, setScheduleForm] = useState(null);
+  const [scheduleEditingId, setScheduleEditingId] = useState(null);
+  const [scheduleError, setScheduleError] = useState('');
+  const [scheduleFilterPerson, setScheduleFilterPerson] = useState('all');
 
   useEffect(() => {
     (async () => {
       let loadedSettings = DEFAULT_SETTINGS;
       let loadedShifts = [];
       let loadedMeta = {};
+      let loadedSchedule = [];
       try {
         const res = await window.storage.get(SETTINGS_KEY, false);
         if (res && res.value) loadedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(res.value) };
@@ -328,10 +415,18 @@ export default function App() {
         const res = await window.storage.get(MONTH_META_KEY, false);
         if (res && res.value) loadedMeta = JSON.parse(res.value) || {};
       } catch (e) {}
+      try {
+        const res = await window.storage.get(SCHEDULE_KEY, false);
+        if (res && res.value) {
+          const parsed = JSON.parse(res.value);
+          if (Array.isArray(parsed)) loadedSchedule = parsed.map(normalizeScheduleEntry);
+        }
+      } catch (e) {}
       setSettings(loadedSettings);
       setSettingsDraft(loadedSettings);
       setShifts(loadedShifts);
       setMonthMeta(loadedMeta);
+      setScheduleEntries(loadedSchedule);
       setForm({
         date: todayStr(),
         person: 'p1',
@@ -340,11 +435,14 @@ export default function App() {
         breakMin: String(loadedSettings.defaultBreakMin ?? ''),
         quarter1Min: String(loadedSettings.defaultQuarterMin ?? ''),
         quarter2Min: String(loadedSettings.defaultQuarterMin ?? ''),
+        truckReception: false,
+        garbageDuty: false,
         rate: String(loadedSettings.p1Rate ?? ''),
         extraAmount: '',
         extraNote: '',
         note: '',
       });
+      setScheduleForm({ date: todayStr(), person: 'p1', startTime: '', endTime: '', note: '' });
       setStatsMonth(currentMonthKey());
       setLoading(false);
     })();
@@ -357,6 +455,16 @@ export default function App() {
       setSaveError(result ? '' : 'Не удалось сохранить. Попробуйте ещё раз.');
     } catch (e) {
       setSaveError('Не удалось сохранить. Проверьте соединение.');
+    }
+  }, []);
+
+  const persistSchedule = useCallback(async (next) => {
+    setScheduleEntries(next);
+    try {
+      const result = await window.storage.set(SCHEDULE_KEY, JSON.stringify(next), false);
+      setSaveError(result ? '' : 'Не удалось сохранить расписание. Попробуйте ещё раз.');
+    } catch (e) {
+      setSaveError('Не удалось сохранить расписание. Проверьте соединение.');
     }
   }, []);
 
@@ -397,6 +505,8 @@ export default function App() {
       breakMin: String(settings.defaultBreakMin ?? ''),
       quarter1Min: String(settings.defaultQuarterMin ?? ''),
       quarter2Min: String(settings.defaultQuarterMin ?? ''),
+      truckReception: false,
+      garbageDuty: false,
       rate: String((p === 'p1' ? settings.p1Rate : settings.p2Rate) ?? ''),
       extraAmount: '',
       extraNote: '',
@@ -445,6 +555,8 @@ export default function App() {
       breakMin,
       quarter1Min,
       quarter2Min,
+      truckReception: !!form.truckReception,
+      garbageDuty: !!form.garbageDuty,
       rate,
       extraAmount,
       extraNote: form.extraNote.trim(),
@@ -467,6 +579,8 @@ export default function App() {
       breakMin: String(shift.breakMin || 0),
       quarter1Min: String(shift.quarter1Min || 0),
       quarter2Min: String(shift.quarter2Min || 0),
+      truckReception: !!shift.truckReception,
+      garbageDuty: !!shift.garbageDuty,
       rate: String(shift.rate || ''),
       extraAmount: shift.extraAmount ? String(shift.extraAmount) : '',
       extraNote: shift.extraNote || '',
@@ -475,6 +589,51 @@ export default function App() {
     setEditingId(shift.id);
     setFormError('');
     setTab('add');
+  }
+
+  function resetScheduleForm(person) {
+    setScheduleForm({ date: todayStr(), person: person || 'p1', startTime: '', endTime: '', note: '' });
+    setScheduleEditingId(null);
+    setScheduleError('');
+  }
+
+  function handleScheduleSubmit(e) {
+    e.preventDefault();
+    if (!scheduleForm.date) return setScheduleError('Укажите дату');
+    if (!scheduleForm.startTime || !scheduleForm.endTime) return setScheduleError('Укажите время начала и конца');
+    if (scheduleForm.startTime === scheduleForm.endTime) return setScheduleError('Время начала и окончания совпадает');
+
+    const prevCreatedAt = scheduleEditingId ? scheduleEntries.find((s) => s.id === scheduleEditingId)?.createdAt : null;
+    const entry = {
+      id: scheduleEditingId || genId(),
+      date: scheduleForm.date,
+      person: scheduleForm.person,
+      startTime: scheduleForm.startTime,
+      endTime: scheduleForm.endTime,
+      note: scheduleForm.note.trim(),
+      createdAt: prevCreatedAt || Date.now(),
+    };
+    const next = scheduleEditingId
+      ? scheduleEntries.map((s) => (s.id === scheduleEditingId ? entry : s))
+      : [...scheduleEntries, entry];
+    persistSchedule(next);
+    resetScheduleForm(scheduleForm.person);
+  }
+
+  function startScheduleEdit(entry) {
+    setScheduleForm({
+      date: entry.date,
+      person: entry.person,
+      startTime: entry.startTime || '',
+      endTime: entry.endTime || '',
+      note: entry.note || '',
+    });
+    setScheduleEditingId(entry.id);
+    setScheduleError('');
+  }
+
+  function handleScheduleDelete(id) {
+    persistSchedule(scheduleEntries.filter((s) => s.id !== id));
   }
 
   function handleDelete(id) {
@@ -572,8 +731,8 @@ export default function App() {
 
   if (loading || !form) {
     return (
-      <div className="min-h-screen bg-stone-100 flex items-center justify-center">
-        <p className="text-stone-400 text-sm">Загрузка…</p>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: BG_GRADIENT, fontFamily: SYSTEM_SANS }}>
+        <p className="text-sm" style={{ color: '#6E6E73' }}>Загрузка…</p>
       </div>
     );
   }
@@ -585,6 +744,8 @@ export default function App() {
     breakMin: parseInt(form.breakMin, 10) || 0,
     quarter1Min: parseInt(form.quarter1Min, 10) || 0,
     quarter2Min: parseInt(form.quarter2Min, 10) || 0,
+    truckReception: !!form.truckReception,
+    garbageDuty: !!form.garbageDuty,
     rate: parseFloat(form.rate) || 0,
     extraAmount: parseFloat(form.extraAmount) || 0,
   });
@@ -592,22 +753,30 @@ export default function App() {
   const effectiveStatsMonth = payrollMonths.includes(statsMonth) ? statsMonth : (payrollMonths[0] || currentMonthKey());
 
   return (
-    <div className="min-h-screen bg-stone-100" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
+    <div className="min-h-screen relative" style={{ fontFamily: SYSTEM_SANS }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Slab:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
-        .font-display { font-family: 'IBM Plex Slab', serif; }
-        .font-mono-num { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+        .font-display { font-family: ${SYSTEM_SANS}; }
+        .font-mono-num { font-family: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
+        .glass-divide > * + * { border-top: 1px solid rgba(255,255,255,0.45); }
+        input, textarea, select, button { font-family: inherit; }
+        input:focus, textarea:focus, select:focus, button:focus { outline: none; }
+        ::placeholder { color: rgba(60,60,67,0.38); }
+        @media (prefers-reduced-motion: reduce) {
+          *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+        }
       `}</style>
+      <div className="fixed inset-0 pointer-events-none" style={{ background: BG_GRADIENT }} />
 
-      <div className="max-w-md mx-auto pb-24">
+      <div className="relative max-w-md mx-auto pb-32">
         <header className="flex items-center justify-between px-5 pt-6 pb-4">
           <div>
-            <h1 className="font-display text-2xl text-stone-900 font-semibold tracking-tight">Табель смен</h1>
-            <p className="text-stone-500 text-xs mt-0.5">Часы, премии и командировочные</p>
+            <h1 className="font-display text-2xl font-semibold tracking-tight" style={{ color: '#1C1C1E' }}>Табель смен</h1>
+            <p className="text-xs mt-0.5" style={{ color: '#6E6E73' }}>Часы, премии и командировочные</p>
           </div>
           <button
             onClick={() => { setSettingsDraft(settings); setShowSettings(true); }}
-            className="w-10 h-10 rounded-full bg-white border border-stone-200 flex items-center justify-center text-stone-500 active:scale-95 transition-transform focus:ring-2 focus:ring-stone-400"
+            className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+            style={{ ...GLASS_PANEL_TIGHT, color: '#3C3C43' }}
             aria-label="Настройки"
           >
             <SettingsIcon size={18} />
@@ -615,13 +784,13 @@ export default function App() {
         </header>
 
         {saveError && (
-          <div className="mx-5 mb-4 flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2">
+          <div className="mx-5 mb-4 flex items-center gap-2 rounded-2xl text-xs px-3 py-2.5" style={{ ...tintStyle('#b91c1c', 0.1), color: '#991b1b' }}>
             <AlertCircle size={14} className="shrink-0" />
             {saveError}
           </div>
         )}
 
-        <main className="px-5">
+        <main className="px-5 relative">
           {tab === 'add' && (
             <AddForm
               form={form}
@@ -662,14 +831,31 @@ export default function App() {
               onHolidaysChange={updateHolidays}
             />
           )}
+          {tab === 'schedule' && (
+            <ScheduleView
+              entries={scheduleEntries}
+              settings={settings}
+              form={scheduleForm}
+              setForm={setScheduleForm}
+              onSubmit={handleScheduleSubmit}
+              error={scheduleError}
+              editingId={scheduleEditingId}
+              onCancelEdit={() => resetScheduleForm(scheduleForm.person)}
+              onEdit={startScheduleEdit}
+              onDelete={handleScheduleDelete}
+              filterPerson={scheduleFilterPerson}
+              setFilterPerson={setScheduleFilterPerson}
+            />
+          )}
         </main>
       </div>
 
-      <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-stone-200">
-        <div className="max-w-md mx-auto grid grid-cols-3">
+      <nav className="fixed bottom-4 inset-x-4 z-40">
+        <div className="max-w-md mx-auto grid grid-cols-4 gap-1 rounded-3xl px-2 py-2" style={GLASS_NAV}>
           <TabButton icon={Plus} label="Добавить" active={tab === 'add'} onClick={() => setTab('add')} />
           <TabButton icon={List} label="Таблица" active={tab === 'table'} onClick={() => setTab('table')} />
           <TabButton icon={BarChart3} label="Статистика" active={tab === 'stats'} onClick={() => setTab('stats')} />
+          <TabButton icon={Calendar} label="Расписание" active={tab === 'schedule'} onClick={() => setTab('schedule')} />
         </div>
       </nav>
 
@@ -689,10 +875,11 @@ function TabButton({ icon: Icon, label, active, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`flex flex-col items-center gap-1 py-2.5 focus:ring-2 focus:ring-inset focus:ring-stone-400 ${active ? 'text-teal-700' : 'text-stone-400'}`}
+      className="relative flex flex-col items-center justify-center gap-0.5 py-2 rounded-2xl transition-all duration-300"
+      style={active ? { backgroundColor: hexToRgba(P1_COLOR, 0.14), boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.5)' } : undefined}
     >
-      <Icon size={20} strokeWidth={active ? 2.5 : 2} />
-      <span className={`text-xs ${active ? 'font-medium' : ''}`}>{label}</span>
+      <Icon size={20} strokeWidth={active ? 2.3 : 1.8} style={{ color: active ? P1_COLOR : '#8E8E93' }} />
+      <span className="text-xs font-medium" style={{ color: active ? P1_COLOR : '#8E8E93' }}>{label}</span>
     </button>
   );
 }
@@ -702,7 +889,10 @@ function PersonStamp({ letter, color, size }) {
   return (
     <span
       className={`${dims} rounded-full flex items-center justify-center font-display font-semibold text-white shrink-0`}
-      style={{ backgroundColor: color, boxShadow: `0 0 0 2px white, 0 0 0 3px ${color}55` }}
+      style={{
+        backgroundImage: `linear-gradient(150deg, rgba(255,255,255,0.55), rgba(255,255,255,0) 55%), linear-gradient(135deg, ${color}, ${hexToRgba(color, 0.85)})`,
+        boxShadow: `0 0 0 2px rgba(255,255,255,0.85), 0 2px 6px -1px ${hexToRgba(color, 0.5)}`,
+      }}
     >
       {letter}
     </span>
@@ -712,9 +902,20 @@ function PersonStamp({ letter, color, size }) {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="block text-xs text-stone-500 mb-1.5">{label}</span>
+      <span className="block text-xs font-medium mb-1.5" style={{ color: '#6E6E73' }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+function Toggle({ checked, onChange, label }) {
+  return (
+    <button type="button" role="switch" aria-checked={checked} onClick={onChange} className="flex items-center justify-between gap-3 w-full py-2.5">
+      <span className="text-sm" style={{ color: '#3C3C43' }}>{label}</span>
+      <span className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 shrink-0" style={{ backgroundColor: checked ? '#34C759' : 'rgba(120,120,128,0.32)' }}>
+        <span className="inline-block h-5 w-5 rounded-full bg-white transition-transform duration-200" style={{ transform: checked ? 'translateX(20px)' : 'translateX(2px)', boxShadow: '0 1px 3px rgba(0,0,0,0.3)' }} />
+      </span>
+    </button>
   );
 }
 
@@ -736,11 +937,11 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
   const showBreakdown = preview.hours > 0 || preview.extra !== 0;
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5 pt-1">
+    <form onSubmit={onSubmit} className="space-y-4 pt-1">
       {editingId && (
-        <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+        <div className="flex items-center justify-between rounded-2xl px-3 py-2.5 text-xs" style={{ ...tintStyle('#b45309', 0.1), color: '#92400e' }}>
           <span>Редактирование записи</span>
-          <button type="button" onClick={onCancelEdit} className="underline">Отменить</button>
+          <button type="button" onClick={onCancelEdit} className="underline font-medium">Отменить</button>
         </div>
       )}
 
@@ -748,32 +949,35 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
         <button
           type="button"
           onClick={() => onPersonSelect('p1')}
-          className={`flex items-center gap-2 justify-center rounded-xl py-3 border-2 transition-colors ${form.person === 'p1' ? 'border-teal-700 bg-teal-50' : 'border-stone-200 bg-white'}`}
+          className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all"
+          style={form.person === 'p1' ? tintStyle(P1_COLOR, 0.14) : GLASS_WELL}
         >
           <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
-          <span className={`text-sm font-medium ${form.person === 'p1' ? 'text-teal-800' : 'text-stone-600'}`}>{settings.p1Name}</span>
+          <span className="text-sm font-medium" style={{ color: form.person === 'p1' ? P1_COLOR : '#3C3C43' }}>{settings.p1Name}</span>
         </button>
         <button
           type="button"
           onClick={() => onPersonSelect('p2')}
-          className={`flex items-center gap-2 justify-center rounded-xl py-3 border-2 transition-colors ${form.person === 'p2' ? 'border-violet-700 bg-violet-50' : 'border-stone-200 bg-white'}`}
+          className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all"
+          style={form.person === 'p2' ? tintStyle(P2_COLOR, 0.14) : GLASS_WELL}
         >
           <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
-          <span className={`text-sm font-medium ${form.person === 'p2' ? 'text-violet-800' : 'text-stone-600'}`}>{settings.p2Name}</span>
+          <span className="text-sm font-medium" style={{ color: form.person === 'p2' ? P2_COLOR : '#3C3C43' }}>{settings.p2Name}</span>
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-4">
+      <div className="rounded-3xl p-4 space-y-4" style={GLASS_PANEL}>
         <Field label="Дата смены">
           <input
             type="date"
             value={form.date}
             onChange={update('date')}
-            className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+            className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+            style={GLASS_WELL}
           />
         </Field>
         {form.date && (
-          <p className={`text-xs -mt-2 ${isWeekendDate(form.date) ? 'text-violet-600 font-medium' : 'text-stone-400'}`}>
+          <p className="text-xs -mt-2 font-medium" style={{ color: isWeekendDate(form.date) ? P2_COLOR : '#8E8E93' }}>
             {WEEKDAY_FULL[dayOfWeek(form.date)]}{isWeekendDate(form.date) ? ' — премия выходного дня +560 ₽' : ''}
           </p>
         )}
@@ -783,7 +987,8 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               type="time"
               value={form.startTime}
               onChange={update('startTime')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+              style={GLASS_WELL}
             />
           </Field>
           <Field label="Конец смены">
@@ -791,51 +996,56 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               type="time"
               value={form.endTime}
               onChange={update('endTime')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+              style={GLASS_WELL}
             />
           </Field>
         </div>
         <div>
-          <span className="block text-xs text-stone-500 mb-1.5">Перерывы, мин (не оплачиваются)</span>
+          <span className="block text-xs font-medium mb-1.5" style={{ color: '#6E6E73' }}>Перерывы, мин (не оплачиваются)</span>
           <div className="grid grid-cols-3 gap-2">
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Брейк" aria-label="Брейк, минут"
               value={form.breakMin} onChange={update('breakMin')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
+              style={GLASS_WELL}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 1" aria-label="Пятнашка 1, минут"
               value={form.quarter1Min} onChange={update('quarter1Min')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
+              style={GLASS_WELL}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 2" aria-label="Пятнашка 2, минут"
               value={form.quarter2Min} onChange={update('quarter2Min')}
-              className="w-full bg-stone-50 border border-stone-200 rounded-lg px-2 py-2 text-sm font-mono-num text-center focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
+              style={GLASS_WELL}
             />
           </div>
           <div className="grid grid-cols-3 gap-2 mt-1">
-            <span className="text-[10px] text-stone-400 text-center">Брейк</span>
-            <span className="text-[10px] text-stone-400 text-center">Пятнашка 1</span>
-            <span className="text-[10px] text-stone-400 text-center">Пятнашка 2</span>
+            <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Брейк</span>
+            <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Пятнашка 1</span>
+            <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Пятнашка 2</span>
           </div>
         </div>
         <Field label="Ставка, ₽/ч">
           <input
             type="number" inputMode="decimal" min="0" step="1" placeholder="231"
             value={form.rate} onChange={update('rate')}
-            className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+            className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+            style={GLASS_WELL}
           />
         </Field>
         {preview.grossHours > 0 && (
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs bg-stone-50 rounded-lg px-3 py-2">
-            <span className="font-mono-num text-stone-500">{formatHours(preview.grossHours)} по графику</span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs rounded-xl px-3 py-2" style={GLASS_WELL}>
+            <span className="font-mono-num" style={{ color: '#6E6E73' }}>{formatHours(preview.grossHours)} по графику</span>
             {preview.breakHours > 0 && (
-              <span className="font-mono-num text-stone-500">− {formatHours(preview.breakHours)} перерывы</span>
+              <span className="font-mono-num" style={{ color: '#6E6E73' }}>− {formatHours(preview.breakHours)} перерывы</span>
             )}
-            <span className="font-mono-num font-medium text-stone-700">= {formatHours(preview.hours)} оплачено</span>
+            <span className="font-mono-num font-semibold" style={{ color: '#1C1C1E' }}>= {formatHours(preview.hours)} оплачено</span>
             {preview.night > 0 && (
-              <span className="flex items-center gap-1 text-indigo-700">
+              <span className="flex items-center gap-1" style={{ color: '#5856D6' }}>
                 <Moon size={12} /> {formatHours(preview.night)} в ночном окне · {preview.isMajorNight ? '+30% на всю смену' : '+20% на эти часы'}
               </span>
             )}
@@ -843,33 +1053,57 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={() => setForm((f) => ({ ...f, truckReception: !f.truckReception }))}
+          className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all"
+          style={form.truckReception ? tintStyle('#d97706', 0.14) : GLASS_WELL}
+        >
+          <Truck size={16} style={{ color: form.truckReception ? '#b45309' : '#8E8E93' }} />
+          <span className="text-sm font-medium" style={{ color: form.truckReception ? '#92400e' : '#3C3C43' }}>Приёмка машины</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setForm((f) => ({ ...f, garbageDuty: !f.garbageDuty }))}
+          className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all"
+          style={form.garbageDuty ? tintStyle('#d97706', 0.14) : GLASS_WELL}
+        >
+          <Trash size={16} style={{ color: form.garbageDuty ? '#b45309' : '#8E8E93' }} />
+          <span className="text-sm font-medium" style={{ color: form.garbageDuty ? '#92400e' : '#3C3C43' }}>Выгрузка мусора</span>
+        </button>
+      </div>
+
       <button
         type="button"
         onClick={() => setShowExtra((v) => !v)}
-        className="flex items-center gap-1 text-xs text-stone-500 font-medium"
+        className="flex items-center gap-1 text-xs font-medium"
+        style={{ color: '#6E6E73' }}
       >
         {showExtra ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         Ручная корректировка (необязательно)
       </button>
       {showExtra && (
-        <div className="bg-white rounded-xl border border-stone-200 p-4 space-y-4">
+        <div className="rounded-3xl p-4 space-y-4" style={GLASS_PANEL}>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Сумма, ₽">
               <input
                 type="number" inputMode="decimal" step="1" placeholder="0"
                 value={form.extraAmount} onChange={update('extraAmount')}
-                className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+                className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                style={GLASS_WELL}
               />
             </Field>
             <Field label="За что">
               <input
                 type="text" placeholder="Напр. разовая доплата"
                 value={form.extraNote} onChange={update('extraNote')}
-                className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-amber-600 focus:ring-2 focus:ring-amber-100"
+                className="w-full rounded-xl px-3 py-2 text-sm"
+                style={GLASS_WELL}
               />
             </Field>
           </div>
-          <p className="text-xs text-stone-400">Можно указать и отрицательную сумму — для коррекции. Облагается налогом 13%, как и остальные надбавки.</p>
+          <p className="text-xs" style={{ color: '#8E8E93' }}>Можно указать и отрицательную сумму — для коррекции. Облагается налогом 13%, как и остальные надбавки.</p>
         </div>
       )}
 
@@ -877,14 +1111,15 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
         <textarea
           rows={2} placeholder="Любые детали смены"
           value={form.note} onChange={update('note')}
-          className="w-full bg-white border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-teal-600 focus:ring-2 focus:ring-teal-100 resize-none"
+          className="w-full rounded-xl px-3 py-2 text-sm resize-none"
+          style={GLASS_WELL}
         />
       </Field>
 
-      {formError && <p className="text-red-700 text-xs">{formError}</p>}
+      {formError && <p className="text-xs font-medium" style={{ color: '#b91c1c' }}>{formError}</p>}
 
       {showBreakdown && (
-        <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100 overflow-hidden">
+        <div className="rounded-3xl overflow-hidden glass-divide" style={GLASS_PANEL}>
           {preview.hours > 0 && (
             <LineItem label={`Оплата по ставке (${formatHours(preview.hours)} × ${form.rate || 0}₽)`} value={preview.base} />
           )}
@@ -893,21 +1128,24 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
           )}
           {preview.reliabilityBonus > 0 && <LineItem label="Премия надёжности (15%)" value={preview.reliabilityBonus} accent="amber" />}
           {preview.weekendBonus > 0 && <LineItem label="Премия выходного дня" value={preview.weekendBonus} accent="amber" />}
+          {preview.truckBonus > 0 && <LineItem label="Приёмка машины" value={preview.truckBonus} accent="amber" />}
+          {preview.garbageBonus > 0 && <LineItem label="Выгрузка мусора" value={preview.garbageBonus} accent="amber" />}
           {preview.extra !== 0 && <LineItem label={form.extraNote || 'Ручная корректировка'} value={preview.extra} accent="amber" />}
           <LineItem label="НДФЛ 13%" value={-preview.tax} accent="rose" />
         </div>
       )}
 
-      <div className="flex items-center justify-between bg-stone-900 rounded-xl px-4 py-3.5">
-        <span className="text-stone-300 text-sm">К выплате за смену</span>
+      <div className="flex items-center justify-between rounded-3xl px-4 py-3.5" style={GLASS_DARK}>
+        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>К выплате за смену</span>
         <span className="font-mono-num text-white text-lg font-semibold">{formatMoney(preview.net)}</span>
       </div>
 
-      <p className="text-xs text-stone-400 -mt-2">Месячные премии (высокий сезон, гибкий график, переработка) и командировочные — во вкладке «Статистика».</p>
+      <p className="text-xs -mt-2" style={{ color: '#AEAEB2' }}>Месячные премии (высокий сезон, гибкий график, переработка) и командировочные — во вкладке «Статистика».</p>
 
       <button
         type="submit"
-        className="w-full bg-teal-700 hover:bg-teal-800 text-white rounded-xl py-3.5 text-sm font-medium active:scale-95 transition-transform focus:ring-2 focus:ring-teal-400 focus:ring-offset-2"
+        className="w-full text-white rounded-2xl py-3.5 text-sm font-semibold active:scale-95 transition-transform"
+        style={specularButton(P1_COLOR)}
       >
         {editingId ? 'Сохранить изменения' : 'Сохранить смену'}
       </button>
@@ -916,15 +1154,11 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
 }
 
 function FilterChip({ active, onClick, children, color }) {
+  const style = active ? (color ? tintStyle(color, 0.16) : GLASS_DARK) : GLASS_WELL;
+  const textColor = active ? (color || '#ffffff') : '#3C3C43';
   return (
-    <button
-      onClick={onClick}
-      style={active && color ? { backgroundColor: color } : undefined}
-      className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-        active ? `text-white border-transparent ${!color ? 'bg-stone-800' : ''}` : 'bg-white text-stone-500 border-stone-200'
-      }`}
-    >
-      {children}
+    <button onClick={onClick} className="shrink-0 px-3.5 py-1.5 rounded-full text-xs font-medium transition-all" style={style}>
+      <span style={{ color: textColor }}>{children}</span>
     </button>
   );
 }
@@ -939,7 +1173,8 @@ function TableView({ groups, settings, filterPerson, setFilterPerson, filterMont
         <select
           value={filterMonth}
           onChange={(e) => setFilterMonth(e.target.value)}
-          className="ml-auto text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 text-stone-600 focus:ring-2 focus:ring-stone-300"
+          className="ml-auto text-xs rounded-full px-3 py-1.5"
+          style={{ ...GLASS_WELL, color: '#3C3C43' }}
         >
           <option value="all">Все месяцы</option>
           {availableMonths.map((mk) => (
@@ -950,8 +1185,8 @@ function TableView({ groups, settings, filterPerson, setFilterPerson, filterMont
 
       {groups.length === 0 && (
         <div className="text-center py-16">
-          <p className="text-stone-400 text-sm">Записей пока нет.</p>
-          <p className="text-stone-400 text-sm">Добавьте первую смену на вкладке «Добавить».</p>
+          <p className="text-sm" style={{ color: '#8E8E93' }}>Записей пока нет.</p>
+          <p className="text-sm" style={{ color: '#8E8E93' }}>Добавьте первую смену на вкладке «Добавить».</p>
         </div>
       )}
 
@@ -959,10 +1194,10 @@ function TableView({ groups, settings, filterPerson, setFilterPerson, filterMont
         {groups.map((g) => (
           <div key={g.month}>
             <div className="flex items-baseline justify-between mb-2 px-1">
-              <h3 className="font-display text-sm font-semibold text-stone-700">{g.label}</h3>
-              <span className="font-mono-num text-sm text-stone-500">{formatMoney(g.total)}</span>
+              <h3 className="font-display text-sm font-semibold" style={{ color: '#3C3C43' }}>{g.label}</h3>
+              <span className="font-mono-num text-sm" style={{ color: '#6E6E73' }}>{formatMoney(g.total)}</span>
             </div>
-            <div className="bg-white rounded-xl border border-stone-200 divide-y divide-stone-100 overflow-hidden">
+            <div className="rounded-3xl overflow-hidden glass-divide" style={GLASS_PANEL}>
               {g.items.map((s) => (
                 <ShiftRow key={s.id} shift={s} settings={settings} onEdit={() => onEdit(s)} onDelete={() => onDelete(s.id)} />
               ))}
@@ -985,27 +1220,29 @@ function ShiftRow({ shift, settings, onEdit, onDelete }) {
     <div className="flex items-center gap-3 px-3.5 py-3">
       <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
       <button type="button" onClick={onEdit} className="flex-1 min-w-0 text-left">
-        <div className="flex items-center gap-2 text-sm text-stone-800 flex-wrap">
-          <span className={`font-mono-num ${weekend ? 'text-violet-700 font-medium' : ''}`}>
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <span className="font-mono-num" style={{ color: weekend ? P2_COLOR : '#1C1C1E', fontWeight: weekend ? 600 : 400 }}>
             {formatDateShort(shift.date)} {WEEKDAY_SHORT[dayOfWeek(shift.date)]}
           </span>
-          {hasTimes && <span className="text-stone-500 text-xs font-mono-num">{shift.startTime}–{shift.endTime}</span>}
-          {pay.breakHours > 0 && <span className="text-stone-400 text-xs font-mono-num">−{Math.round(pay.breakHours * 60)} мин</span>}
-          {pay.nightBonus > 0 && <Moon size={12} className="text-indigo-500 shrink-0" />}
+          {hasTimes && <span className="text-xs font-mono-num" style={{ color: '#6E6E73' }}>{shift.startTime}–{shift.endTime}</span>}
+          {pay.breakHours > 0 && <span className="text-xs font-mono-num" style={{ color: '#AEAEB2' }}>−{Math.round(pay.breakHours * 60)} мин</span>}
+          {pay.nightBonus > 0 && <Moon size={12} style={{ color: '#5856D6' }} className="shrink-0" />}
+          {shift.truckReception && <Truck size={12} style={{ color: '#b45309' }} className="shrink-0" />}
+          {shift.garbageDuty && <Trash size={12} style={{ color: '#b45309' }} className="shrink-0" />}
           {pay.extra !== 0 && (
-            <span className="text-amber-700 text-xs font-mono-num">{pay.extra > 0 ? '+' : ''}{formatMoney(pay.extra)}</span>
+            <span className="text-xs font-mono-num" style={{ color: '#b45309' }}>{pay.extra > 0 ? '+' : ''}{formatMoney(pay.extra)}</span>
           )}
         </div>
-        {shift.note && <p className="text-xs text-stone-400 truncate mt-0.5">{shift.note}</p>}
+        {shift.note && <p className="text-xs truncate mt-0.5" style={{ color: '#AEAEB2' }}>{shift.note}</p>}
       </button>
-      <span className="font-mono-num text-sm font-semibold text-stone-900">{formatMoney(pay.net)}</span>
+      <span className="font-mono-num text-sm font-semibold" style={{ color: '#1C1C1E' }}>{formatMoney(pay.net)}</span>
       {confirmDelete ? (
         <div className="flex items-center gap-1 shrink-0">
-          <button onClick={onDelete} className="text-xs text-white bg-red-700 rounded px-1.5 py-1">Удалить</button>
-          <button onClick={() => setConfirmDelete(false)} className="text-xs text-stone-400 px-1">Нет</button>
+          <button onClick={onDelete} className="text-xs text-white rounded-full px-2 py-1" style={{ backgroundColor: '#b91c1c' }}>Удалить</button>
+          <button onClick={() => setConfirmDelete(false)} className="text-xs px-1" style={{ color: '#8E8E93' }}>Нет</button>
         </div>
       ) : (
-        <button onClick={() => setConfirmDelete(true)} className="text-stone-300 p-1 shrink-0" aria-label="Удалить запись">
+        <button onClick={() => setConfirmDelete(true)} className="p-1 shrink-0" style={{ color: '#C7C7CC' }} aria-label="Удалить запись">
           <Trash2 size={15} />
         </button>
       )}
@@ -1015,9 +1252,9 @@ function ShiftRow({ shift, settings, onEdit, onDelete }) {
 
 function StatCard({ label, value, accent }) {
   return (
-    <div className="bg-white rounded-xl border border-stone-200 p-4">
-      <p className="text-xs text-stone-500 mb-1">{label}</p>
-      <p className={`font-mono-num text-xl font-semibold ${accent || 'text-stone-900'}`}>{value}</p>
+    <div className="rounded-3xl p-4" style={GLASS_PANEL}>
+      <p className="text-xs mb-1" style={{ color: '#6E6E73' }}>{label}</p>
+      <p className={`font-mono-num text-xl font-semibold ${accent || ''}`} style={!accent ? { color: '#1C1C1E' } : undefined}>{value}</p>
     </div>
   );
 }
@@ -1025,51 +1262,54 @@ function StatCard({ label, value, accent }) {
 function PayslipCard({ summary, name, color, onHolidaysChange }) {
   const s = summary;
   return (
-    <div className="bg-white rounded-xl border border-stone-200 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-stone-100" style={{ backgroundColor: `${color}0d` }}>
+    <div className="rounded-3xl overflow-hidden" style={GLASS_PANEL}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ backgroundColor: hexToRgba(color, 0.1), borderBottom: '1px solid rgba(255,255,255,0.5)' }}>
         <div className="flex items-center gap-2">
           <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
-          <span className="text-sm font-medium text-stone-800">{name}</span>
+          <span className="text-sm font-medium" style={{ color: '#1C1C1E' }}>{name}</span>
         </div>
-        <span className="font-mono-num text-xs text-stone-500">{formatHours(s.hours)} · норма {s.norm}ч</span>
+        <span className="font-mono-num text-xs" style={{ color: '#6E6E73' }}>{formatHours(s.hours)} · норма {s.norm}ч</span>
       </div>
 
-      <div className="flex items-center justify-between px-4 py-2 text-xs text-stone-400 bg-stone-50 border-b border-stone-100">
+      <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: '#8E8E93', backgroundColor: 'rgba(255,255,255,0.3)', borderBottom: '1px solid rgba(255,255,255,0.5)' }}>
         <span>Будних дней: {s.wkd}, праздничных:</span>
         <input
           type="number" min="0" value={s.holidays}
           onChange={(e) => onHolidaysChange(e.target.value)}
-          className="w-14 text-right bg-white border border-stone-200 rounded px-1.5 py-0.5 font-mono-num text-stone-700"
+          className="w-14 text-right rounded-lg px-1.5 py-0.5 font-mono-num"
+          style={{ ...GLASS_WELL, color: '#3C3C43' }}
         />
       </div>
 
-      <div className="divide-y divide-stone-100">
+      <div className="glass-divide">
         <LineItem label="Оплата по ставке" value={s.base} />
         {s.nightBonus > 0 && <LineItem label="Доплата за вечер/ночь" value={s.nightBonus} accent="indigo" />}
         {s.reliabilityBonus > 0 && <LineItem label="Премия надёжности" value={s.reliabilityBonus} accent="amber" />}
         {s.weekendBonus > 0 && <LineItem label={`Премия выходного дня (${s.weekendCount})`} value={s.weekendBonus} accent="amber" />}
+        {s.truckBonus > 0 && <LineItem label={`Приёмка машины (${s.truckCount})`} value={s.truckBonus} accent="amber" />}
+        {s.garbageBonus > 0 && <LineItem label={`Выгрузка мусора (${s.garbageCount})`} value={s.garbageBonus} accent="amber" />}
         {s.highSeasonBonus > 0 && <LineItem label="Премия «Высокий сезон»" value={s.highSeasonBonus} accent="amber" />}
         {s.flexBonus > 0 && <LineItem label="Премия «Любые временные возможности»" value={s.flexBonus} accent="amber" />}
         {s.overtimePremium > 0 && <LineItem label={`Доплата за переработку (${formatHours(s.otHours)})`} value={s.overtimePremium} accent="amber" />}
         {s.extra !== 0 && <LineItem label="Разовые корректировки" value={s.extra} accent="amber" />}
       </div>
-      <div className="border-t border-stone-200">
+      <div style={{ borderTop: '1px solid rgba(255,255,255,0.5)' }}>
         <LineItem label="Начислено до налога" value={s.taxableGross} bold />
         <LineItem label="НДФЛ 13%" value={-s.tax} accent="rose" />
       </div>
 
       {s.nonTaxable > 0 && (
         <>
-          <div className="px-3.5 pt-2.5 pb-1 text-xs font-medium uppercase tracking-wide text-emerald-700 bg-emerald-50/60">Без НДФЛ</div>
-          <div className="divide-y divide-stone-100">
+          <div className="px-3.5 pt-2.5 pb-1 text-xs font-medium uppercase tracking-wide" style={{ color: '#047857', backgroundColor: 'rgba(16,185,129,0.08)' }}>Без НДФЛ</div>
+          <div className="glass-divide">
             {s.travelBonus > 0 && <LineItem label="Премия «Путешествуй и работай»" value={s.travelBonus} accent="emerald" />}
             {s.perDiem > 0 && <LineItem label={`Командировочные (${s.perDiemDays} дн. × 500₽)`} value={s.perDiem} accent="emerald" />}
           </div>
         </>
       )}
 
-      <div className="flex items-center justify-between bg-stone-900 px-4 py-3.5">
-        <span className="text-stone-300 text-sm">Итого к выплате</span>
+      <div className="flex items-center justify-between px-4 py-3.5" style={GLASS_DARK}>
+        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>Итого к выплате</span>
         <span className="font-mono-num text-white text-lg font-semibold">{formatMoney(s.netTotal)}</span>
       </div>
     </div>
@@ -1080,7 +1320,7 @@ function StatsView({ overallStats, settings, shiftsCount, availableMonths, month
   if (shiftsCount === 0 && overallStats.netAll === 0) {
     return (
       <div className="text-center py-16">
-        <p className="text-stone-400 text-sm">Пока нет данных для статистики.</p>
+        <p className="text-sm" style={{ color: '#8E8E93' }}>Пока нет данных для статистики.</p>
       </div>
     );
   }
@@ -1102,11 +1342,12 @@ function StatsView({ overallStats, settings, shiftsCount, availableMonths, month
 
       <div>
         <div className="flex items-center justify-between mb-3 px-1 gap-2">
-          <h3 className="font-display text-sm font-semibold text-stone-700 shrink-0">Расчётный лист</h3>
+          <h3 className="font-display text-sm font-semibold shrink-0" style={{ color: '#3C3C43' }}>Расчётный лист</h3>
           <select
             value={statsMonth}
             onChange={(e) => setStatsMonth(e.target.value)}
-            className="text-xs bg-white border border-stone-200 rounded-lg px-2.5 py-1.5 text-stone-600 focus:ring-2 focus:ring-stone-300 min-w-0"
+            className="text-xs rounded-full px-3 py-1.5 min-w-0"
+            style={{ ...GLASS_WELL, color: '#3C3C43' }}
           >
             {availableMonths.map((mk) => (
               <option key={mk} value={mk}>{monthLabel(mk)}</option>
@@ -1127,27 +1368,27 @@ function StatsView({ overallStats, settings, shiftsCount, availableMonths, month
         )}
       </div>
 
-      <div className="bg-white rounded-xl border border-stone-200 p-4">
-        <h3 className="font-display text-sm font-semibold text-stone-700 mb-3">По месяцам, на руки</h3>
+      <div className="rounded-3xl p-4" style={GLASS_PANEL}>
+        <h3 className="font-display text-sm font-semibold mb-3" style={{ color: '#3C3C43' }}>По месяцам, на руки</h3>
         <div style={{ width: '100%', height: 200 }}>
           <ResponsiveContainer>
             <BarChart data={overallStats.monthlyArr} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e7e5e4" />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#78716c' }} axisLine={false} tickLine={false} />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(148,163,184,0.25)" />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#8E8E93' }} axisLine={false} tickLine={false} />
               <YAxis
                 width={38}
-                tick={{ fontSize: 10, fill: '#78716c' }}
+                tick={{ fontSize: 10, fill: '#8E8E93' }}
                 axisLine={false}
                 tickLine={false}
                 tickFormatter={(v) => (v >= 1000 ? `${Math.round(v / 1000)}к` : v)}
               />
               <Tooltip
                 formatter={(value, name) => [formatMoney(value), name === 'p1' ? settings.p1Name : settings.p2Name]}
-                contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e7e5e4' }}
+                contentStyle={{ fontSize: 12, borderRadius: 14, border: '1px solid rgba(255,255,255,0.6)', backgroundColor: 'rgba(255,255,255,0.85)', backdropFilter: 'blur(10px)' }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v) => (v === 'p1' ? settings.p1Name : settings.p2Name)} />
-              <Bar dataKey="p1" name="p1" fill={P1_COLOR} radius={[3, 3, 0, 0]} />
-              <Bar dataKey="p2" name="p2" fill={P2_COLOR} radius={[3, 3, 0, 0]} />
+              <Bar dataKey="p1" name="p1" fill={P1_COLOR} radius={[6, 6, 0, 0]} />
+              <Bar dataKey="p2" name="p2" fill={P2_COLOR} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -1162,13 +1403,18 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
   return (
     <div
       className="fixed inset-0 flex items-end justify-center z-50"
-      style={{ backgroundColor: 'rgba(28,25,23,0.45)' }}
+      style={{ backgroundColor: 'rgba(15,15,20,0.4)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
       onClick={onClose}
     >
-      <div className="bg-white rounded-t-2xl w-full max-w-md p-5 pb-8 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="w-full max-w-md p-5 pb-8 overflow-y-auto rounded-t-3xl"
+        style={{ ...GLASS_NAV, maxHeight: '85vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ backgroundColor: 'rgba(120,120,128,0.3)' }} />
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-display text-lg font-semibold text-stone-900">Настройки</h2>
-          <button onClick={onClose} className="text-stone-400 p-1" aria-label="Закрыть">
+          <h2 className="font-display text-lg font-semibold" style={{ color: '#1C1C1E' }}>Настройки</h2>
+          <button onClick={onClose} className="p-1" style={{ color: '#8E8E93' }} aria-label="Закрыть">
             <X size={20} />
           </button>
         </div>
@@ -1178,13 +1424,15 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Имя (человек 1)">
                 <input
                   type="text" value={draft.p1Name} onChange={update('p1Name')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm"
+                  style={GLASS_WELL}
                 />
               </Field>
               <Field label="Ставка, ₽/ч">
                 <input
                   type="number" inputMode="decimal" min="0" value={draft.p1Rate} onChange={update('p1Rate')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
             </div>
@@ -1192,67 +1440,71 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
               <Field label="Имя (человек 2)">
                 <input
                   type="text" value={draft.p2Name} onChange={update('p2Name')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm focus:border-violet-600 focus:ring-2 focus:ring-violet-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm"
+                  style={GLASS_WELL}
                 />
               </Field>
               <Field label="Ставка, ₽/ч">
                 <input
                   type="number" inputMode="decimal" min="0" value={draft.p2Rate} onChange={update('p2Rate')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-violet-600 focus:ring-2 focus:ring-violet-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
             </div>
           </div>
 
-          <div className="pt-1 border-t border-stone-100">
-            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-stone-500 mt-4 mb-3">
+          <div className="pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.5)' }}>
+            <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide mt-4 mb-3" style={{ color: '#6E6E73' }}>
               <Plane size={13} /> Командировка
             </div>
             <div className="grid grid-cols-2 gap-3 mb-3">
               <Field label="Дата начала">
                 <input
                   type="date" value={draft.tripStart} onChange={update('tripStart')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
               <Field label="Окончание (если есть)">
                 <input
                   type="date" value={draft.tripEnd} onChange={update('tripEnd')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
             </div>
-            <label className="flex items-center gap-2 text-sm text-stone-600 mb-2">
-              <input type="checkbox" checked={!!draft.p1OnTrip} onChange={toggle('p1OnTrip')} className="rounded border-stone-300" />
-              {draft.p1Name || 'Человек 1'} в командировке
-            </label>
-            <label className="flex items-center gap-2 text-sm text-stone-600">
-              <input type="checkbox" checked={!!draft.p2OnTrip} onChange={toggle('p2OnTrip')} className="rounded border-stone-300" />
-              {draft.p2Name || 'Человек 2'} в командировке
-            </label>
-            <p className="text-xs text-stone-400 mt-2">Командировочные (500₽/день) и премия «Путешествуй и работай» считаются по этим датам, независимо от смен — они появятся в статистике, даже если смен в месяце не было.</p>
+            <div className="rounded-2xl px-3.5 mb-2" style={GLASS_WELL}>
+              <Toggle checked={!!draft.p1OnTrip} onChange={toggle('p1OnTrip')} label={`${draft.p1Name || 'Человек 1'} в командировке`} />
+            </div>
+            <div className="rounded-2xl px-3.5" style={GLASS_WELL}>
+              <Toggle checked={!!draft.p2OnTrip} onChange={toggle('p2OnTrip')} label={`${draft.p2Name || 'Человек 2'} в командировке`} />
+            </div>
+            <p className="text-xs mt-2" style={{ color: '#8E8E93' }}>Командировочные (500₽/день) и премия «Путешествуй и работай» считаются по этим датам, независимо от смен — они появятся в статистике, даже если смен в месяце не было.</p>
           </div>
 
-          <div className="pt-1 border-t border-stone-100">
-            <div className="text-xs font-medium uppercase tracking-wide text-stone-500 mt-4 mb-3">Перерывы по умолчанию</div>
+          <div className="pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.5)' }}>
+            <div className="text-xs font-medium uppercase tracking-wide mt-4 mb-3" style={{ color: '#6E6E73' }}>Перерывы по умолчанию</div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Брейк, мин">
                 <input
                   type="number" inputMode="numeric" min="0" step="5" value={draft.defaultBreakMin} onChange={update('defaultBreakMin')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
               <Field label="Каждая пятнашка, мин">
                 <input
                   type="number" inputMode="numeric" min="0" step="5" value={draft.defaultQuarterMin} onChange={update('defaultQuarterMin')}
-                  className="w-full bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 text-sm font-mono-num focus:border-teal-600 focus:ring-2 focus:ring-teal-100"
+                  className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                  style={GLASS_WELL}
                 />
               </Field>
             </div>
-            <p className="text-xs text-stone-400 mt-2">Эти значения подставляются в новую смену — можно поменять для конкретного дня прямо в форме добавления.</p>
+            <p className="text-xs mt-2" style={{ color: '#8E8E93' }}>Эти значения подставляются в новую смену — можно поменять для конкретного дня прямо в форме добавления.</p>
           </div>
 
-          <button type="submit" className="w-full bg-stone-900 text-white rounded-xl py-3 text-sm font-medium mt-2">
+          <button type="submit" className="w-full text-white rounded-2xl py-3 text-sm font-semibold mt-2" style={specularButton('#1C1C1E')}>
             Сохранить настройки
           </button>
         </form>
@@ -1260,3 +1512,145 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
     </div>
   );
 }
+
+function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editingId, onCancelEdit, onEdit, onDelete, filterPerson, setFilterPerson }) {
+  const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const filtered = filterPerson === 'all' ? entries : entries.filter((e) => e.person === filterPerson);
+  const groups = useMemo(() => {
+    const map = {};
+    filtered.forEach((e) => {
+      const mk = e.date.slice(0, 7);
+      if (!map[mk]) map[mk] = [];
+      map[mk].push(e);
+    });
+    return Object.entries(map)
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([mk, items]) => ({
+        month: mk,
+        label: monthLabel(mk),
+        items: [...items].sort((a, b) => a.date.localeCompare(b.date) || a.startTime.localeCompare(b.startTime)),
+      }));
+  }, [filtered]);
+
+  if (!form) return null;
+
+  return (
+    <div className="pt-1 space-y-5">
+      <p className="text-xs -mt-1" style={{ color: '#8E8E93' }}>Это просто график на память — сюда можно вносить смены заранее, в расчёт премий и налога он не попадает.</p>
+
+      <form onSubmit={onSubmit} className="space-y-4">
+        {editingId && (
+          <div className="flex items-center justify-between rounded-2xl px-3 py-2.5 text-xs" style={{ ...tintStyle('#b45309', 0.1), color: '#92400e' }}>
+            <span>Редактирование записи расписания</span>
+            <button type="button" onClick={onCancelEdit} className="underline font-medium">Отменить</button>
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, person: 'p1' }))}
+            className="flex items-center gap-2 justify-center rounded-2xl py-2.5 transition-all"
+            style={form.person === 'p1' ? tintStyle(P1_COLOR, 0.14) : GLASS_WELL}
+          >
+            <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
+            <span className="text-sm font-medium" style={{ color: form.person === 'p1' ? P1_COLOR : '#3C3C43' }}>{settings.p1Name}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, person: 'p2' }))}
+            className="flex items-center gap-2 justify-center rounded-2xl py-2.5 transition-all"
+            style={form.person === 'p2' ? tintStyle(P2_COLOR, 0.14) : GLASS_WELL}
+          >
+            <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
+            <span className="text-sm font-medium" style={{ color: form.person === 'p2' ? P2_COLOR : '#3C3C43' }}>{settings.p2Name}</span>
+          </button>
+        </div>
+        <div className="rounded-3xl p-4 space-y-3" style={GLASS_PANEL}>
+          <Field label="Дата">
+            <input
+              type="date" value={form.date} onChange={update('date')}
+              className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+              style={GLASS_WELL}
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Начало">
+              <input
+                type="time" value={form.startTime} onChange={update('startTime')}
+                className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                style={GLASS_WELL}
+              />
+            </Field>
+            <Field label="Конец">
+              <input
+                type="time" value={form.endTime} onChange={update('endTime')}
+                className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+                style={GLASS_WELL}
+              />
+            </Field>
+          </div>
+          <Field label="Заметка (необязательно)">
+            <input
+              type="text" placeholder="Напр. подработка, замена"
+              value={form.note} onChange={update('note')}
+              className="w-full rounded-xl px-3 py-2 text-sm"
+              style={GLASS_WELL}
+            />
+          </Field>
+        </div>
+        {error && <p className="text-xs font-medium" style={{ color: '#b91c1c' }}>{error}</p>}
+        <button
+          type="submit"
+          className="w-full text-white rounded-2xl py-3 text-sm font-semibold active:scale-95 transition-transform"
+          style={specularButton('#48484A')}
+        >
+          {editingId ? 'Сохранить изменения' : 'Добавить в расписание'}
+        </button>
+      </form>
+
+      <div className="flex items-center gap-2 overflow-x-auto pt-2">
+        <FilterChip active={filterPerson === 'all'} onClick={() => setFilterPerson('all')}>Все</FilterChip>
+        <FilterChip active={filterPerson === 'p1'} onClick={() => setFilterPerson('p1')} color={P1_COLOR}>{settings.p1Name}</FilterChip>
+        <FilterChip active={filterPerson === 'p2'} onClick={() => setFilterPerson('p2')} color={P2_COLOR}>{settings.p2Name}</FilterChip>
+      </div>
+
+      {groups.length === 0 && (
+        <div className="text-center py-12">
+          <p className="text-sm" style={{ color: '#8E8E93' }}>В расписании пока пусто.</p>
+        </div>
+      )}
+
+      <div className="space-y-6">
+        {groups.map((g) => (
+          <div key={g.month}>
+            <h3 className="font-display text-sm font-semibold mb-2 px-1" style={{ color: '#3C3C43' }}>{g.label}</h3>
+            <div className="rounded-3xl overflow-hidden glass-divide" style={GLASS_PANEL}>
+              {g.items.map((entry) => {
+                const color = entry.person === 'p1' ? P1_COLOR : P2_COLOR;
+                const name = entry.person === 'p1' ? settings.p1Name : settings.p2Name;
+                const weekend = isWeekendDate(entry.date);
+                return (
+                  <div key={entry.id} className="flex items-center gap-3 px-3.5 py-3">
+                    <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+                    <button type="button" onClick={() => onEdit(entry)} className="flex-1 min-w-0 text-left">
+                      <div className="flex items-center gap-2 text-sm flex-wrap">
+                        <span className="font-mono-num" style={{ color: weekend ? P2_COLOR : '#1C1C1E', fontWeight: weekend ? 600 : 400 }}>
+                          {formatDateShort(entry.date)} {WEEKDAY_SHORT[dayOfWeek(entry.date)]}
+                        </span>
+                        <span className="text-xs font-mono-num" style={{ color: '#6E6E73' }}>{entry.startTime}–{entry.endTime}</span>
+                      </div>
+                      {entry.note && <p className="text-xs truncate mt-0.5" style={{ color: '#AEAEB2' }}>{entry.note}</p>}
+                    </button>
+                    <button onClick={() => onDelete(entry.id)} className="p-1 shrink-0" style={{ color: '#C7C7CC' }} aria-label="Удалить запись">
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );}
