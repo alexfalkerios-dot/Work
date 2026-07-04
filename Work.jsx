@@ -94,8 +94,8 @@ const GLASS_PANEL = {
 };
 const GLASS_PANEL_TIGHT = { ...GLASS_PANEL, boxShadow: '0 6px 20px -10px rgba(30,41,59,0.14), inset 0 1px 0 rgba(255,255,255,0.5)' };
 const GLASS_WELL = {
-  backgroundColor: 'rgba(255,255,255,0.55)',
-  border: '1px solid rgba(148,163,184,0.3)',
+  backgroundColor: 'rgba(255,255,255,0.82)',
+  border: '1px solid rgba(148,163,184,0.35)',
   boxShadow: 'inset 0 1px 2px rgba(15,23,42,0.05)',
 };
 const GLASS_NAV = {
@@ -758,8 +758,9 @@ export default function App() {
         .font-display { font-family: ${SYSTEM_SANS}; }
         .font-mono-num { font-family: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
         .glass-divide > * + * { border-top: 1px solid rgba(255,255,255,0.45); }
-        input, textarea, select, button { font-family: inherit; }
+        input, textarea, select, button { font-family: inherit; -webkit-appearance: none; }
         input:focus, textarea:focus, select:focus, button:focus { outline: none; }
+        input, textarea, select { position: relative; z-index: 1; }
         ::placeholder { color: rgba(60,60,67,0.38); }
         @media (prefers-reduced-motion: reduce) {
           *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
@@ -966,14 +967,14 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
         </button>
       </div>
 
-      <div className="rounded-3xl p-4 space-y-4" style={GLASS_PANEL}>
+      <div className="rounded-3xl p-4 space-y-5" style={{ ...GLASS_PANEL, isolation: 'isolate' }}>
         <Field label="Дата смены">
           <input
             type="date"
             value={form.date}
             onChange={update('date')}
-            className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
-            style={GLASS_WELL}
+            className="w-full rounded-xl px-3 py-2.5 text-sm font-mono-num"
+            style={{ ...GLASS_WELL, minHeight: 44 }}
           />
         </Field>
         {form.date && (
@@ -981,14 +982,14 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
             {WEEKDAY_FULL[dayOfWeek(form.date)]}{isWeekendDate(form.date) ? ' — премия выходного дня +560 ₽' : ''}
           </p>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-4">
           <Field label="Начало смены">
             <input
               type="time"
               value={form.startTime}
               onChange={update('startTime')}
-              className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
-              style={GLASS_WELL}
+              className="w-full rounded-xl px-3 py-2.5 text-sm font-mono-num"
+              style={{ ...GLASS_WELL, minHeight: 44 }}
             />
           </Field>
           <Field label="Конец смены">
@@ -996,34 +997,34 @@ function AddForm({ form, setForm, settings, onPersonSelect, onSubmit, formError,
               type="time"
               value={form.endTime}
               onChange={update('endTime')}
-              className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
-              style={GLASS_WELL}
+              className="w-full rounded-xl px-3 py-2.5 text-sm font-mono-num"
+              style={{ ...GLASS_WELL, minHeight: 44 }}
             />
           </Field>
         </div>
         <div>
           <span className="block text-xs font-medium mb-1.5" style={{ color: '#6E6E73' }}>Перерывы, мин (не оплачиваются)</span>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-3">
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Брейк" aria-label="Брейк, минут"
               value={form.breakMin} onChange={update('breakMin')}
-              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
-              style={GLASS_WELL}
+              className="w-full rounded-xl px-2 py-2.5 text-sm font-mono-num text-center"
+              style={{ ...GLASS_WELL, minHeight: 44 }}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 1" aria-label="Пятнашка 1, минут"
               value={form.quarter1Min} onChange={update('quarter1Min')}
-              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
-              style={GLASS_WELL}
+              className="w-full rounded-xl px-2 py-2.5 text-sm font-mono-num text-center"
+              style={{ ...GLASS_WELL, minHeight: 44 }}
             />
             <input
               type="number" inputMode="numeric" min="0" step="5" placeholder="Пятнашка 2" aria-label="Пятнашка 2, минут"
               value={form.quarter2Min} onChange={update('quarter2Min')}
-              className="w-full rounded-xl px-2 py-2 text-sm font-mono-num text-center"
-              style={GLASS_WELL}
+              className="w-full rounded-xl px-2 py-2.5 text-sm font-mono-num text-center"
+              style={{ ...GLASS_WELL, minHeight: 44 }}
             />
           </div>
-          <div className="grid grid-cols-3 gap-2 mt-1">
+          <div className="grid grid-cols-3 gap-3 mt-1">
             <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Брейк</span>
             <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Пятнашка 1</span>
             <span className="text-xs text-center" style={{ color: '#AEAEB2' }}>Пятнашка 2</span>
