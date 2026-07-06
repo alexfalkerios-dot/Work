@@ -28,6 +28,7 @@ const DEFAULT_SETTINGS = {
   p2OnTrip: true,
   defaultBreakMin: 60,
   defaultQuarterMin: 15,
+  monthlyGoal: 26000,
 };
 
 const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
@@ -107,6 +108,12 @@ function monthRange(startKey, endKey) {
     guard += 1;
   }
   return out;
+}
+
+function addMonths(monthKey, delta) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 }
 
 function toMinutes(hhmm) {
@@ -313,6 +320,7 @@ export {
   nightHoursOf,
   normalizeShift,
   normalizeScheduleEntry,
+  addMonths,
   computeShiftPay,
   perDiemDaysForMonth,
   isFullMonthInTrip,

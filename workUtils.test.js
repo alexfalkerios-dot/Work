@@ -8,7 +8,7 @@ import {
   monthLabel, monthShortLabel, dayOfWeek, isWeekendDate,
   daysInMonth, weekdaysInMonth, monthBounds, diffDaysInclusive,
   monthRange, toMinutes, shiftHoursOf, nightHoursOf,
-  normalizeShift, normalizeScheduleEntry, computeShiftPay,
+  normalizeShift, normalizeScheduleEntry, addMonths, computeShiftPay,
   perDiemDaysForMonth, isFullMonthInTrip, computeMonthSummary,
 } from './workUtils.js';
 
@@ -178,6 +178,25 @@ describe('monthRange', () => {
   });
   it('returns empty array when start > end', () => {
     expect(monthRange('2027-01', '2026-12')).toEqual([]);
+  });
+});
+
+describe('addMonths', () => {
+  it('adds months within same year', () => {
+    expect(addMonths('2026-07', 1)).toBe('2026-08');
+    expect(addMonths('2026-07', 3)).toBe('2026-10');
+  });
+  it('subtracts months within same year', () => {
+    expect(addMonths('2026-07', -1)).toBe('2026-06');
+  });
+  it('crosses year boundary forward', () => {
+    expect(addMonths('2026-11', 3)).toBe('2027-02');
+  });
+  it('crosses year boundary backward', () => {
+    expect(addMonths('2026-02', -3)).toBe('2025-11');
+  });
+  it('returns same month for delta 0', () => {
+    expect(addMonths('2026-07', 0)).toBe('2026-07');
   });
 });
 
@@ -884,5 +903,6 @@ describe('constants', () => {
     expect(DEFAULT_SETTINGS).toHaveProperty('defaultQuarterMin');
     expect(DEFAULT_SETTINGS.defaultBreakMin).toBe(60);
     expect(DEFAULT_SETTINGS.defaultQuarterMin).toBe(15);
+    expect(DEFAULT_SETTINGS.monthlyGoal).toBe(26000);
   });
 });
