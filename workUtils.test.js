@@ -1,6 +1,9 @@
 import {
   TAX_RATE, RELIABILITY_RATE, NIGHT_MINOR_RATE, NIGHT_MAJOR_RATE,
   HIGH_SEASON_THRESHOLD, HIGH_SEASON_BONUS, FLEX_BONUS_CAP, WEEKEND_BONUS,
+  HOLIDAY_MD, ADVANCE_DAY, SALARY_DAY,
+  isHolidayDate, holidayWeekdaysInMonth, shiftPayDateForWeekend, nextPayoutOccurrence,
+  splitShiftsByHalf, computeAdvanceAmount, computeSalaryAmount, computeNextPayout,
   TRAVEL_WORK_BONUS, PER_DIEM_RATE, OT_TIER1_HOURS, OT_TIER1_MULT, OT_TIER2_MULT,
   TRUCK_BONUS, GARBAGE_BONUS,
   DEFAULT_SETTINGS,
@@ -649,13 +652,25 @@ describe('computeMonthSummary', () => {
     expect(s.hours).toBe(8);
   });
 
-  it('calculates norm based on weekdays minus holidays', () => {
-    const meta = { '2026-07': { holidays: 2 } };
-    const s = computeMonthSummary('2026-07', 'p1', [], settings, meta);
-    // July 2026 has 23 weekdays, minus 2 holidays = 21, norm = 21*8 = 168
-    expect(s.wkd).toBe(23);
-    expect(s.holidays).toBe(2);
-    expect(s.norm).toBe(168);
+  it('calculates norm based on weekdays minus automatic holidays', () => {
+    // Feb 2026 has 20 weekdays; 02-23 (Mon) is the one weekday holiday → norm = (20-1)*8 = 152
+    const s = computeMonthSummary('2026-02', 'p1', [], settings);
+    expect(s.wkd).toBe(20);
+    expect(s.holidays).toBe(1);
+    expect(s.norm).toBe(152);
+  });
+
+  it('excludes holiday hours from high season and flex bonuses', () => {
+    // Two shifts: one on a holiday (01-01) and one normal day, same month
+    const shifts = [
+      { person: 'p1', date: '2026-01-01', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0 },
+      { person: 'p1', date: '2026-01-08', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0 },
+    ];
+    const s = computeMonthSummary('2026-01', 'p1', shifts, settings);
+    expect(s.hours).toBe(16);
+    expect(s.holidayHours).toBe(8);
+    // flexBonus uses nonHolidayHours (8), not total hours (16)
+    expect(s.flexBonus).toBeCloseTo((8 / s.norm) * 15000);
   });
 
   it('awards high season bonus when hours > 120', () => {
@@ -904,5 +919,168 @@ describe('constants', () => {
     expect(DEFAULT_SETTINGS.defaultBreakMin).toBe(60);
     expect(DEFAULT_SETTINGS.defaultQuarterMin).toBe(15);
     expect(DEFAULT_SETTINGS.monthlyGoal).toBe(26000);
+    expect(DEFAULT_SETTINGS).toHaveProperty('p1Avatar');
+    expect(DEFAULT_SETTINGS).toHaveProperty('p2Avatar');
+  });
+  it('HOLIDAY_MD contains expected holidays', () => {
+    expect(HOLIDAY_MD).toContain('01-01');
+    expect(HOLIDAY_MD).toContain('05-09');
+    expect(HOLIDAY_MD).toContain('11-04');
+  });
+  it('ADVANCE_DAY is 27 and SALARY_DAY is 12', () => {
+    expect(ADVANCE_DAY).toBe(27);
+    expect(SALARY_DAY).toBe(12);
+  });
+});
+
+// =====================================================================
+// 7. Holidays & payout logic
+// =====================================================================
+
+describe('isHolidayDate', () => {
+  it('returns true for holiday dates regardless of year', () => {
+    expect(isHolidayDate('2026-01-01')).toBe(true);
+    expect(isHolidayDate('2030-05-09')).toBe(true);
+    expect(isHolidayDate('2026-11-04')).toBe(true);
+  });
+  it('returns false for non-holiday dates', () => {
+    expect(isHolidayDate('2026-07-15')).toBe(false);
+    expect(isHolidayDate('2026-12-25')).toBe(false);
+  });
+  it('returns false for empty input', () => {
+    expect(isHolidayDate('')).toBe(false);
+    expect(isHolidayDate(null)).toBe(false);
+  });
+});
+
+describe('holidayWeekdaysInMonth', () => {
+  it('counts only weekday holidays', () => {
+    // Feb 2026: 02-23 is a Monday → 1 weekday holiday
+    expect(holidayWeekdaysInMonth(2026, 2)).toBe(1);
+  });
+  it('returns 0 for a month with no holidays', () => {
+    expect(holidayWeekdaysInMonth(2026, 7)).toBe(0);
+  });
+  it('does not count holidays that fall on a weekend', () => {
+    // 03-08 2026 is a Sunday → not counted
+    expect(holidayWeekdaysInMonth(2026, 3)).toBe(0);
+  });
+});
+
+describe('shiftPayDateForWeekend', () => {
+  it('moves Saturday back to Friday', () => {
+    // 2026-07-04 is a Saturday
+    const d = shiftPayDateForWeekend(new Date(2026, 6, 4));
+    expect(d.getDay()).toBe(5);
+    expect(d.getDate()).toBe(3);
+  });
+  it('moves Sunday back to Friday', () => {
+    // 2026-07-05 is a Sunday
+    const d = shiftPayDateForWeekend(new Date(2026, 6, 5));
+    expect(d.getDay()).toBe(5);
+    expect(d.getDate()).toBe(3);
+  });
+  it('leaves a weekday unchanged', () => {
+    // 2026-07-03 is a Friday
+    const d = shiftPayDateForWeekend(new Date(2026, 6, 3));
+    expect(d.getDate()).toBe(3);
+  });
+});
+
+describe('nextPayoutOccurrence', () => {
+  it('returns the occurrence in the current month if the day is still ahead', () => {
+    const occ = nextPayoutOccurrence(27, new Date(2026, 6, 1));
+    expect(occ.monthKey).toBe('2026-07');
+  });
+  it('rolls to next month when the day has already passed', () => {
+    const occ = nextPayoutOccurrence(12, new Date(2026, 6, 20));
+    expect(occ.monthKey).toBe('2026-08');
+  });
+  it('shifts the returned date off a weekend', () => {
+    // ADVANCE_DAY 27 in 2026-06: June 27 2026 is a Saturday → shifted to Friday 26
+    const occ = nextPayoutOccurrence(27, new Date(2026, 5, 1));
+    expect(occ.date.getDay()).not.toBe(0);
+    expect(occ.date.getDay()).not.toBe(6);
+  });
+});
+
+describe('splitShiftsByHalf', () => {
+  const shifts = [
+    { person: 'p1', date: '2026-07-05', startTime: '08:00', endTime: '16:00', rate: 231 },
+    { person: 'p1', date: '2026-07-20', startTime: '08:00', endTime: '16:00', rate: 231 },
+    { person: 'p2', date: '2026-07-10', startTime: '08:00', endTime: '16:00', rate: 215 },
+    { person: 'p1', date: '2026-08-05', startTime: '08:00', endTime: '16:00', rate: 231 },
+  ];
+  it('splits shifts into first (1-15) and second (16-end) halves', () => {
+    const { first, second } = splitShiftsByHalf('2026-07', 'p1', shifts);
+    expect(first).toHaveLength(1);
+    expect(first[0].date).toBe('2026-07-05');
+    expect(second).toHaveLength(1);
+    expect(second[0].date).toBe('2026-07-20');
+  });
+  it('filters by person and month', () => {
+    const { first, second } = splitShiftsByHalf('2026-07', 'p2', shifts);
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0);
+  });
+});
+
+describe('computeAdvanceAmount', () => {
+  const settings = { p1Rate: 231, p2Rate: 215 };
+  it('pays base hours * rate only, no bonuses, for days 1-15', () => {
+    const shifts = [
+      { person: 'p1', date: '2026-07-05', startTime: '00:00', endTime: '08:00', rate: 231 },
+    ];
+    const a = computeAdvanceAmount('2026-07', 'p1', shifts, settings);
+    expect(a.hours).toBe(8);
+    expect(a.gross).toBe(8 * 231);
+    expect(a.tax).toBeCloseTo(8 * 231 * 0.13);
+    expect(a.net).toBeCloseTo(8 * 231 * 0.87);
+  });
+  it('ignores shifts from the second half of the month', () => {
+    const shifts = [
+      { person: 'p1', date: '2026-07-20', startTime: '08:00', endTime: '16:00', rate: 231 },
+    ];
+    const a = computeAdvanceAmount('2026-07', 'p1', shifts, settings);
+    expect(a.hours).toBe(0);
+    expect(a.net).toBe(0);
+  });
+});
+
+describe('computeSalaryAmount', () => {
+  const settings = {
+    p1Name: 'A', p2Name: 'B', p1Rate: 231, p2Rate: 215,
+    tripStart: '', tripEnd: '', p1OnTrip: false, p2OnTrip: false,
+  };
+  it('includes second-half hours and monthly bonuses', () => {
+    const shifts = [
+      { person: 'p1', date: '2026-07-20', startTime: '08:00', endTime: '16:00', rate: 231, extraAmount: 0 },
+    ];
+    const sal = computeSalaryAmount('2026-07', 'p1', shifts, settings);
+    expect(sal.hours).toBe(8);
+    expect(sal.taxablePart).toBeGreaterThan(0);
+    expect(sal.net).toBeCloseTo(sal.taxablePart * 0.87 + sal.nonTaxable);
+  });
+});
+
+describe('computeNextPayout', () => {
+  const settings = {
+    p1Name: 'A', p2Name: 'B', p1Rate: 231, p2Rate: 215,
+    tripStart: '', tripEnd: '', p1OnTrip: false, p2OnTrip: false,
+  };
+  it('returns advance when the 27th is the nearer payout', () => {
+    // From July 20: advance (27th) comes before salary (Aug 12)
+    const payout = computeNextPayout('p1', [], settings, new Date(2026, 6, 20));
+    expect(payout.type).toBe('advance');
+  });
+  it('returns salary when the 12th is the nearer payout', () => {
+    // From July 1: salary (12th) comes before advance (27th)
+    const payout = computeNextPayout('p1', [], settings, new Date(2026, 6, 1));
+    expect(payout.type).toBe('salary');
+  });
+  it('includes an estimated amount and date', () => {
+    const payout = computeNextPayout('p1', [], settings, new Date(2026, 6, 20));
+    expect(payout).toHaveProperty('amount');
+    expect(payout.date instanceof Date).toBe(true);
   });
 });

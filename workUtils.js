@@ -17,9 +17,16 @@ const OT_TIER2_MULT = 1.0;
 const TRUCK_BONUS = 1150;
 const GARBAGE_BONUS = 100;
 
+// Holiday dates in 'MM-DD' format, recurring every year.
+const HOLIDAY_MD = ['01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '02-23', '03-08', '05-01', '05-09', '06-12', '11-04'];
+const ADVANCE_DAY = 27; // day of month the advance is paid (hours 1-15 of current month)
+const SALARY_DAY = 12;  // day of month the salary is paid (hours 16-end of previous month + bonuses)
+
 const DEFAULT_SETTINGS = {
   p1Name: 'Я',
   p2Name: 'Жена',
+  p1Avatar: '',
+  p2Avatar: '',
   p1Rate: 231,
   p2Rate: 215,
   tripStart: '2026-06-11',
@@ -73,6 +80,12 @@ function isWeekendDate(dateStr) {
   return dow === 0 || dow === 6;
 }
 
+// Is this date a holiday (compare only 'MM-DD', year ignored — see HOLIDAY_MD)
+function isHolidayDate(dateStr) {
+  if (!dateStr) return false;
+  return HOLIDAY_MD.includes(dateStr.slice(5, 10));
+}
+
 function daysInMonth(year, month) {
   return new Date(year, month, 0).getDate();
 }
@@ -85,6 +98,49 @@ function weekdaysInMonth(year, month) {
     if (dow !== 0 && dow !== 6) count++;
   }
   return count;
+}
+
+// How many holiday dates in this month fall on a weekday
+// (only those reduce the hours norm — a holiday on a weekend wasn't in the norm anyway).
+function holidayWeekdaysInMonth(year, month) {
+  const dim = daysInMonth(year, month);
+  let count = 0;
+  for (let d = 1; d <= dim; d++) {
+    const dow = new Date(year, month - 1, d).getDay();
+    const dateStr = `${year}-${pad2(month)}-${pad2(d)}`;
+    if (dow !== 0 && dow !== 6 && isHolidayDate(dateStr)) count += 1;
+  }
+  return count;
+}
+
+// Move a payout date to an earlier weekday if it lands on a weekend:
+// Saturday -> Friday (-1 day), Sunday -> Friday (-2 days).
+function shiftPayDateForWeekend(date) {
+  const d = new Date(date);
+  const dow = d.getDay();
+  if (dow === 6) d.setDate(d.getDate() - 1);
+  else if (dow === 0) d.setDate(d.getDate() - 2);
+  return d;
+}
+
+// Nearest (today or future) actual payout date for a day-of-month `payDay`,
+// shifted to a weekday. Returns { date: Date, monthKey: 'YYYY-MM' } where monthKey
+// is the month the payDay nominally falls in (before the weekend shift).
+function nextPayoutOccurrence(payDay, fromDate) {
+  let y = fromDate.getFullYear();
+  let m = fromDate.getMonth() + 1;
+  const from0 = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  for (let i = 0; i < 4; i++) {
+    const dim = daysInMonth(y, m);
+    const nominalDay = Math.min(payDay, dim);
+    const actual = shiftPayDateForWeekend(new Date(y, m - 1, nominalDay));
+    if (actual >= from0) {
+      return { date: actual, monthKey: `${y}-${pad2(m)}` };
+    }
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return { date: from0, monthKey: `${y}-${pad2(m)}` };
 }
 
 function monthBounds(monthKey) {
@@ -228,15 +284,16 @@ function isFullMonthInTrip(monthKey, tripStart, tripEnd) {
 }
 
 // ---------- Monthly summary ----------
-function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
+function computeMonthSummary(monthKey, person, shifts, settings) {
   const rate = person === 'p1' ? settings.p1Rate : settings.p2Rate;
   const onTrip = person === 'p1' ? settings.p1OnTrip : settings.p2OnTrip;
   const personShifts = shifts.filter((s) => s.person === person && s.date && s.date.slice(0, 7) === monthKey);
 
-  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
+  let hours = 0, holidayHours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
   personShifts.forEach((s) => {
     const p = computeShiftPay(s);
     hours += p.hours;
+    if (isHolidayDate(s.date)) holidayHours += p.hours;
     nightHours += p.night;
     base += p.base;
     nightBonus += p.nightBonus;
@@ -252,12 +309,15 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
 
   const [y, m] = monthKey.split('-').map(Number);
   const wkd = weekdaysInMonth(y, m);
-  const holidays = (monthMeta && monthMeta[monthKey] && monthMeta[monthKey].holidays) || 0;
+  const holidays = holidayWeekdaysInMonth(y, m); // automatic, replaces manual entry
   const norm = Math.max(0, wkd - holidays) * 8;
   const effectiveRate = hours > 0 ? base / hours : rate;
 
-  const highSeasonBonus = hours > HIGH_SEASON_THRESHOLD ? HIGH_SEASON_BONUS : 0;
-  const flexBonus = norm > 0 ? Math.min(hours / norm, 1) * FLEX_BONUS_CAP : 0;
+  // Hours worked on a holiday do not count toward the 'high season' and
+  // 'flex' bonuses — use nonHolidayHours instead of hours.
+  const nonHolidayHours = Math.max(0, hours - holidayHours);
+  const highSeasonBonus = nonHolidayHours > HIGH_SEASON_THRESHOLD ? HIGH_SEASON_BONUS : 0;
+  const flexBonus = norm > 0 ? Math.min(nonHolidayHours / norm, 1) * FLEX_BONUS_CAP : 0;
   const otHours = Math.max(0, hours - norm);
   const ot1 = Math.min(otHours, OT_TIER1_HOURS);
   const ot2 = Math.max(0, otHours - OT_TIER1_HOURS);
@@ -274,13 +334,68 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const netTotal = netTaxable + nonTaxable;
 
   return {
-    monthKey, person, hours, nightHours, wkd, holidays, norm,
+    monthKey, person, hours, holidayHours, nightHours, wkd, holidays, norm,
     base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, truckBonus, truckCount, garbageBonus, garbageCount, extra,
     highSeasonBonus, flexBonus, otHours, overtimePremium,
     taxableGross, tax, netTaxable,
     travelBonus, perDiemDays, perDiem, nonTaxable, netTotal,
     shiftsCount: personShifts.length,
   };
+}
+
+// ---------- Advance (1-15, base pay only) & Salary (16-end + all bonuses) ----------
+function splitShiftsByHalf(monthKey, person, shifts) {
+  const first = [], second = [];
+  shifts.forEach((s) => {
+    if (s.person !== person || !s.date || s.date.slice(0, 7) !== monthKey) return;
+    const day = Number(s.date.slice(8, 10));
+    if (day <= 15) first.push(s); else second.push(s);
+  });
+  return { first, second };
+}
+
+// Advance: 'dry' hours * rate for days 1-15, WITHOUT night/weekend/bonuses.
+function computeAdvanceAmount(monthKey, person, shifts, settings) {
+  const rate = person === 'p1' ? settings.p1Rate : settings.p2Rate;
+  const { first } = splitShiftsByHalf(monthKey, person, shifts);
+  let hours = 0;
+  first.forEach((s) => { hours += computeShiftPay(s).hours; });
+  const gross = hours * rate;
+  const tax = gross * TAX_RATE;
+  return { hours, gross, tax, net: gross - tax };
+}
+
+// Salary: hours for days 16-end (full shift pay) + ALL monthly bonuses + non-taxable trip income.
+function computeSalaryAmount(monthKey, person, shifts, settings) {
+  const { second } = splitShiftsByHalf(monthKey, person, shifts);
+  let base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, truckBonus = 0, garbageBonus = 0, extra = 0, hours = 0;
+  second.forEach((s) => {
+    const p = computeShiftPay(s);
+    hours += p.hours;
+    base += p.base; nightBonus += p.nightBonus; reliabilityBonus += p.reliabilityBonus;
+    weekendBonus += p.weekendBonus; truckBonus += p.truckBonus; garbageBonus += p.garbageBonus; extra += p.extra;
+  });
+  const monthSummary = computeMonthSummary(monthKey, person, shifts, settings);
+  const taxablePart = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra
+    + monthSummary.highSeasonBonus + monthSummary.flexBonus + monthSummary.overtimePremium;
+  const tax = taxablePart * TAX_RATE;
+  const net = taxablePart - tax + monthSummary.nonTaxable;
+  return { hours, taxablePart, tax, nonTaxable: monthSummary.nonTaxable, net };
+}
+
+// Returns data for the home-screen payout card: which payout is next (advance on the 27th
+// or salary on the 12th), accounting for the weekend shift, and the estimated amount.
+function computeNextPayout(person, shifts, settings, fromDate) {
+  const advOcc = nextPayoutOccurrence(ADVANCE_DAY, fromDate);
+  const salOcc = nextPayoutOccurrence(SALARY_DAY, fromDate);
+  const isAdvanceNext = advOcc.date <= salOcc.date;
+  if (isAdvanceNext) {
+    const amount = computeAdvanceAmount(advOcc.monthKey, person, shifts, settings);
+    return { type: 'advance', date: advOcc.date, amount: amount.net };
+  }
+  const salaryForMonth = addMonths(salOcc.monthKey, -1);
+  const amount = computeSalaryAmount(salaryForMonth, person, shifts, settings);
+  return { type: 'salary', date: salOcc.date, amount: amount.net };
 }
 
 export {
@@ -299,6 +414,9 @@ export {
   OT_TIER2_MULT,
   TRUCK_BONUS,
   GARBAGE_BONUS,
+  HOLIDAY_MD,
+  ADVANCE_DAY,
+  SALARY_DAY,
   DEFAULT_SETTINGS,
   MONTHS_NOM,
   MONTHS_SHORT,
@@ -310,8 +428,12 @@ export {
   monthShortLabel,
   dayOfWeek,
   isWeekendDate,
+  isHolidayDate,
   daysInMonth,
   weekdaysInMonth,
+  holidayWeekdaysInMonth,
+  shiftPayDateForWeekend,
+  nextPayoutOccurrence,
   monthBounds,
   diffDaysInclusive,
   monthRange,
@@ -325,4 +447,8 @@ export {
   perDiemDaysForMonth,
   isFullMonthInTrip,
   computeMonthSummary,
+  splitShiftsByHalf,
+  computeAdvanceAmount,
+  computeSalaryAmount,
+  computeNextPayout,
 };

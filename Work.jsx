@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
-import { Plus, Home, Heart, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Sun, Plane, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Calendar, Truck, Trash, ImagePlus, Video, Send, Download, Target, Flame, Award } from 'lucide-react';
+import { Plus, Home, Heart, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Sun, Plane, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Calendar, Truck, Trash, ImagePlus, Video, Send, Download, Target, Flame, Award, Wallet, Clock, TrendingUp, Users, PartyPopper, Pencil, Camera, History as HistoryIcon } from 'lucide-react';
+// ДОБАВЛЕНЫ ИКОНКИ: Wallet/Clock/TrendingUp/Users — для более наглядных карточек статистики;
+// PartyPopper — маркер праздничного дня; Pencil/Camera — редактирование имени/аватара; HistoryIcon — кнопка «История» на главном экране.
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 /*
@@ -39,10 +41,61 @@ import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Toolti
   функцию uploadMedia() на реальную загрузку файла и сохраняйте вернувшийся URL.
 */
 
+/*
+  ЖУРНАЛ ИЗМЕНЕНИЙ ПО ЗАПРОСУ ПОЛЬЗОВАТЕЛЯ (что и где менялось)
+  ------------------------------------------------------------
+  1) ДИЗАЙН ПЛАШЕК: обновлены getTheme()/panel/well стили (более глубокие тени,
+     тонкие градиенты-«блики»), StatCard теперь с цветной иконкой на аватаре-плашке,
+     PayslipCard/GoalHeroCard получили более выразительные акценты. Ищите блок
+     "---------- Дизайн-токены и тема ----------" и компонент StatCard.
+
+  2) АВАТАРКИ И ПЕРЕИМЕНОВАНИЕ В СТАТИСТИКЕ: в settings добавлены p1Avatar/p2Avatar
+     (data URL, как у фото цели). PersonStamp теперь рисует фото, если оно есть.
+     Новый компонент PeopleEditModal (открывается иконкой карандаша в StatsView)
+     позволяет сменить фото и имя прямо из вкладки «Статистика».
+
+  3) ПРАЗДНИКИ АВТОМАТИЧЕСКИ: HOLIDAY_MD — список праздничных дат (1-7 января,
+     23 февраля, 8 марта, 1 мая, 9 мая, 12 июня, 4 ноября) на каждый год.
+     isHolidayDate()/holidayWeekdaysInMonth() считают, сколько праздников-будних
+     дней в месяце — норма часов автоматически уменьшается на 8ч за каждый такой день.
+     Часы, отработанные в праздник, ИСКЛЮЧЕНЫ из расчёта премий «Высокий сезон» и
+     «Любые временные возможности» (см. computeMonthSummary — nonHolidayHours), но
+     ПРЕМИЯ НАДЁЖНОСТИ по ним продолжает начисляться как обычно (это уже «сухая
+     ставка» — hours × rate × 15%, без дополнительного удвоения). Ручного поля
+     «праздничных дней» больше нет — старое хранилище monthMeta удалено.
+
+  4) ФИКС НАЛОЖЕНИЯ ЭЛЕМЕНТОВ: убран `position: fixed` для фонового градиента и
+     нижней навигации — именно fixed-элементы «слетают» и наслаиваются друг на
+     друга, когда родительский контейнер отрисовывается в масштабируемом окне
+     (мобильный предпросмотр). Теперь всё приложение — это один flex-column на
+     `100dvh`: скроллится только область контента, а нав-бар — обычный последний
+     элемент flex-колонки, который просто всегда внизу. Ищите корневой return в App().
+
+  5) ВВОД ВРЕМЕНИ ЦИФРАМИ: новый компонент TimeField — обычное текстовое поле
+     с inputMode="numeric", вызывает цифровую клавиатуру на телефоне вместо
+     крутилки. Вводите 4 цифры подряд — они сами разделятся на ЧЧ:ММ. Заменяет
+     все <input type="time"> в AddFormModal и ScheduleView.
+
+  6) СВОЙ КАЛЕНДАРЬ ДЛЯ ВЫБОРА ДАТЫ: новый компонент MonthCalendar — общая сетка
+     месяца (переиспользуется и для выбора даты, и для сетки в «Расписании»).
+     В AddFormModal и в форме расписания вместо <input type="date"> теперь сразу
+     открыт этот календарь. В «Расписании» клик по дню в верхнем календаре сразу
+     подставляет эту дату в форму добавления смены/записи. Праздники подсвечены.
+
+  7) ПЛАШКИ ЗАРПЛАТЫ/АВАНСА НА ГЛАВНОМ ЭКРАНЕ: ADVANCE_DAY=27 (аванс — часы
+     1–15 числа, БЕЗ доплат/премий, только ставка) и SALARY_DAY=12 (зарплата —
+     часы 16–конец месяца + ВСЕ премии месяца). nextPayoutDate() переносит дату на
+     более ранний будний день, если она попадает на субботу(-1 день) или
+     воскресенье(-2 дня). На главном экране под общей плашкой — по одной плашке
+     на каждого человека, заголовок и сумма меняются на «аванс»/«зарплату» в
+     зависимости от того, какая дата ближе. Кнопка «История» открывает
+     PayoutHistoryModal со списком прошлых выплат. Ищите computeAdvanceAmount,
+     computeSalaryAmount, nextPayoutDate, PayoutCard, PayoutHistoryModal.
+*/
+
 // ---------- Хранилище ----------
 const SHIFTS_KEY = 'shifts';
 const SETTINGS_KEY = 'settings';
-const MONTH_META_KEY = 'monthMeta';
 const SCHEDULE_KEY = 'scheduleEntries';
 const GOALS_KEY = 'goals';
 const POSTS_KEY = 'posts';
@@ -68,6 +121,8 @@ const GARBAGE_BONUS = 100;
 const DEFAULT_SETTINGS = {
   p1Name: 'Я',
   p2Name: 'Жена',
+  p1Avatar: '', // data URL фото профиля (необязательно) — редактируется во вкладке «Статистика»
+  p2Avatar: '',
   p1Rate: 231,
   p2Rate: 215,
   tripStart: '2026-06-11',
@@ -87,10 +142,18 @@ const HERO_A = '#5b7cfa';
 const HERO_B = '#8b5cf6';
 
 const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAY_SHORT = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 const WEEKDAY_FULL = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 const WEEKDAY_MON_FIRST = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+
+// ---------- Праздники (авто) и даты выплат ----------
+// Список праздничных дат в формате «ММ-ДД» — повторяются каждый год.
+// Чтобы добавить/убрать праздник, просто отредактируйте этот массив.
+const HOLIDAY_MD = ['01-01', '01-02', '01-03', '01-04', '01-05', '01-06', '01-07', '02-23', '03-08', '05-01', '05-09', '06-12', '11-04'];
+const ADVANCE_DAY = 27; // число месяца, когда приходит аванс (часы 1–15 текущего месяца)
+const SALARY_DAY = 12;  // число месяца, когда приходит зарплата (часы 16–конец предыдущего месяца + премии)
 
 // ---------- Дизайн-токены и тема (светлая/тёмная) ----------
 function hexToRgba(hex, alpha) {
@@ -187,8 +250,53 @@ function isWeekendDate(dateStr) {
   const dow = dayOfWeek(dateStr);
   return dow === 0 || dow === 6;
 }
+// Праздник ли эта дата (сравниваем только «ММ-ДД», год не важен — см. HOLIDAY_MD)
+function isHolidayDate(dateStr) {
+  if (!dateStr) return false;
+  return HOLIDAY_MD.includes(dateStr.slice(5, 10));
+}
 function daysInMonth(year, month) { // month: 1-12
   return new Date(year, month, 0).getDate();
+}
+// Сколько праздничных дат в данном месяце приходится на будний день
+// (только они уменьшают норму часов — праздник в выходной и так не входил в норму).
+function holidayWeekdaysInMonth(year, month) {
+  const dim = daysInMonth(year, month);
+  let count = 0;
+  for (let d = 1; d <= dim; d++) {
+    const dow = new Date(year, month - 1, d).getDay();
+    const dateStr = `${year}-${pad2(month)}-${pad2(d)}`;
+    if (dow !== 0 && dow !== 6 && isHolidayDate(dateStr)) count += 1;
+  }
+  return count;
+}
+// Перенос даты выплаты на более ранний будний день, если она попадает на выходной:
+// суббота -> пятница (−1 день), воскресенье -> пятница (−2 дня).
+function shiftPayDateForWeekend(date) {
+  const d = new Date(date);
+  const dow = d.getDay();
+  if (dow === 6) d.setDate(d.getDate() - 1);
+  else if (dow === 0) d.setDate(d.getDate() - 2);
+  return d;
+}
+// Ближайшая (на сегодня или в будущем) фактическая дата выплаты для числа месяца `payDay`,
+// с переносом на будний день. Возвращает { date: Date, monthKey: 'YYYY-MM' } — monthKey это
+// месяц, В КОТОРОМ формально приходится число payDay (до переноса).
+function nextPayoutOccurrence(payDay, fromDate) {
+  let y = fromDate.getFullYear();
+  let m = fromDate.getMonth() + 1;
+  const from0 = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  for (let i = 0; i < 4; i++) {
+    const dim = daysInMonth(y, m);
+    const nominalDay = Math.min(payDay, dim);
+    const actual = shiftPayDateForWeekend(new Date(y, m - 1, nominalDay));
+    if (actual >= from0) {
+      return { date: actual, monthKey: `${y}-${pad2(m)}` };
+    }
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return { date: from0, monthKey: `${y}-${pad2(m)}` };
 }
 function weekdaysInMonth(year, month) {
   const dim = daysInMonth(year, month);
@@ -322,18 +430,21 @@ function isFullMonthInTrip(monthKey, tripStart, tripEnd) {
 }
 
 // ---------- Расчёт за месяц на человека ----------
-function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
+function computeMonthSummary(monthKey, person, shifts, settings) {
   const rate = person === 'p1' ? settings.p1Rate : settings.p2Rate;
   const onTrip = person === 'p1' ? settings.p1OnTrip : settings.p2OnTrip;
   const personShifts = shifts.filter((s) => s.person === person && s.date && s.date.slice(0, 7) === monthKey);
 
-  let hours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
+  let hours = 0, holidayHours = 0, nightHours = 0, base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, weekendCount = 0, truckBonus = 0, truckCount = 0, garbageBonus = 0, garbageCount = 0, extra = 0;
   personShifts.forEach((s) => {
     const p = computeShiftPay(s);
     hours += p.hours;
+    if (isHolidayDate(s.date)) holidayHours += p.hours;
     nightHours += p.night;
     base += p.base;
     nightBonus += p.nightBonus;
+    // Премия надёжности начисляется как обычно и на праздничные смены —
+    // это уже «сухая ставка» (hours × rate × 15%), без какого-либо удвоения.
     reliabilityBonus += p.reliabilityBonus;
     weekendBonus += p.weekendBonus;
     if (p.weekendBonus > 0) weekendCount += 1;
@@ -346,12 +457,15 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
 
   const [y, m] = monthKey.split('-').map(Number);
   const wkd = weekdaysInMonth(y, m);
-  const holidays = (monthMeta && monthMeta[monthKey] && monthMeta[monthKey].holidays) || 0;
+  const holidays = holidayWeekdaysInMonth(y, m); // авто, вместо ручного ввода
   const norm = Math.max(0, wkd - holidays) * 8;
   const effectiveRate = hours > 0 ? base / hours : rate;
 
-  const highSeasonBonus = hours > HIGH_SEASON_THRESHOLD ? HIGH_SEASON_BONUS : 0;
-  const flexBonus = norm > 0 ? Math.min(hours / norm, 1) * FLEX_BONUS_CAP : 0;
+  // Часы, отработанные в праздник, не участвуют в премиях «Высокий сезон» и
+  // «Любые временные возможности» — используем nonHolidayHours вместо hours.
+  const nonHolidayHours = Math.max(0, hours - holidayHours);
+  const highSeasonBonus = nonHolidayHours > HIGH_SEASON_THRESHOLD ? HIGH_SEASON_BONUS : 0;
+  const flexBonus = norm > 0 ? Math.min(nonHolidayHours / norm, 1) * FLEX_BONUS_CAP : 0;
   const otHours = Math.max(0, hours - norm);
   const ot1 = Math.min(otHours, OT_TIER1_HOURS);
   const ot2 = Math.max(0, otHours - OT_TIER1_HOURS);
@@ -368,13 +482,66 @@ function computeMonthSummary(monthKey, person, shifts, settings, monthMeta) {
   const netTotal = netTaxable + nonTaxable;
 
   return {
-    monthKey, person, hours, nightHours, wkd, holidays, norm,
+    monthKey, person, hours, holidayHours, nightHours, wkd, holidays, norm,
     base, nightBonus, reliabilityBonus, weekendBonus, weekendCount, truckBonus, truckCount, garbageBonus, garbageCount, extra,
     highSeasonBonus, flexBonus, otHours, overtimePremium,
     taxableGross, tax, netTaxable,
     travelBonus, perDiemDays, perDiem, nonTaxable, netTotal,
     shiftsCount: personShifts.length,
   };
+}
+
+// ---------- Аванс (1–15 число, без доплат/премий) и Зарплата (16–конец месяца + все премии) ----------
+function splitShiftsByHalf(monthKey, person, shifts) {
+  const first = [], second = [];
+  shifts.forEach((s) => {
+    if (s.person !== person || !s.date || s.date.slice(0, 7) !== monthKey) return;
+    const day = Number(s.date.slice(8, 10));
+    if (day <= 15) first.push(s); else second.push(s);
+  });
+  return { first, second };
+}
+// Аванс: только «сухие» часы × ставка за 1-15 число, БЕЗ ночных/выходных/премий — как просил пользователь.
+function computeAdvanceAmount(monthKey, person, shifts, settings) {
+  const rate = person === 'p1' ? settings.p1Rate : settings.p2Rate;
+  const { first } = splitShiftsByHalf(monthKey, person, shifts);
+  let hours = 0;
+  first.forEach((s) => { hours += computeShiftPay(s).hours; });
+  const gross = hours * rate;
+  const tax = gross * TAX_RATE;
+  return { hours, gross, tax, net: gross - tax };
+}
+// Зарплата: часы 16-конец месяца (по полному расчёту смены: ночные/выходные/премия надёжности и т.д.)
+// + ВСЕ месячные премии (высокий сезон, гибкая премия, переработка) + командировочные/нетто-премии месяца.
+function computeSalaryAmount(monthKey, person, shifts, settings) {
+  const { second } = splitShiftsByHalf(monthKey, person, shifts);
+  let base = 0, nightBonus = 0, reliabilityBonus = 0, weekendBonus = 0, truckBonus = 0, garbageBonus = 0, extra = 0, hours = 0;
+  second.forEach((s) => {
+    const p = computeShiftPay(s);
+    hours += p.hours;
+    base += p.base; nightBonus += p.nightBonus; reliabilityBonus += p.reliabilityBonus;
+    weekendBonus += p.weekendBonus; truckBonus += p.truckBonus; garbageBonus += p.garbageBonus; extra += p.extra;
+  });
+  const monthSummary = computeMonthSummary(monthKey, person, shifts, settings); // для месячных премий и командировочных
+  const taxablePart = base + nightBonus + reliabilityBonus + weekendBonus + truckBonus + garbageBonus + extra
+    + monthSummary.highSeasonBonus + monthSummary.flexBonus + monthSummary.overtimePremium;
+  const tax = taxablePart * TAX_RATE;
+  const net = taxablePart - tax + monthSummary.nonTaxable;
+  return { hours, taxablePart, tax, nonTaxable: monthSummary.nonTaxable, net };
+}
+// Возвращает данные для «плашки» на главном экране: какая выплата ближе (аванс 27-го или зарплата 12-го),
+// с учётом переноса даты при попадании на выходной, и предполагаемую сумму по уже введённым сменам.
+function computeNextPayout(person, shifts, settings, fromDate) {
+  const advOcc = nextPayoutOccurrence(ADVANCE_DAY, fromDate); // аванс месяца advOcc.monthKey, выплата в этом же месяце
+  const salOcc = nextPayoutOccurrence(SALARY_DAY, fromDate);  // зарплата за 2-ю половину месяца ДО salOcc.monthKey
+  const isAdvanceNext = advOcc.date <= salOcc.date;
+  if (isAdvanceNext) {
+    const amount = computeAdvanceAmount(advOcc.monthKey, person, shifts, settings);
+    return { type: 'advance', date: advOcc.date, amount: amount.net };
+  }
+  const salaryForMonth = addMonths(salOcc.monthKey, -1);
+  const amount = computeSalaryAmount(salaryForMonth, person, shifts, settings);
+  return { type: 'salary', date: salOcc.date, amount: amount.net };
 }
 
 // ---------- Расписание (просмотр графика, в расчёт премий не входит) ----------
@@ -564,7 +731,6 @@ export default function App() {
   const [tab, setTab] = useState('home');
   const [shifts, setShifts] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
-  const [monthMeta, setMonthMeta] = useState({});
   const [darkMode, setDarkMode] = useState(false);
   const [goals, setGoals] = useState([]);
   const [posts, setPosts] = useState([]);
@@ -584,6 +750,10 @@ export default function App() {
   const [usPeriod, setUsPeriod] = useState('');
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [goalForm, setGoalForm] = useState(null);
+  const [showPeopleModal, setShowPeopleModal] = useState(false);
+  const [peopleDraft, setPeopleDraft] = useState(null);
+  const [peoplePhotoBusy, setPeoplePhotoBusy] = useState(false);
+  const [showPayoutHistory, setShowPayoutHistory] = useState(false);
   const [scheduleEntries, setScheduleEntries] = useState([]);
   const [scheduleForm, setScheduleForm] = useState(null);
   const [scheduleEditingId, setScheduleEditingId] = useState(null);
@@ -597,7 +767,6 @@ export default function App() {
     (async () => {
       let loadedSettings = DEFAULT_SETTINGS;
       let loadedShifts = [];
-      let loadedMeta = {};
       let loadedSchedule = [];
       let loadedDark = false;
       let loadedGoals = [];
@@ -612,10 +781,6 @@ export default function App() {
           const parsed = JSON.parse(res.value);
           if (Array.isArray(parsed)) loadedShifts = parsed.map(normalizeShift);
         }
-      } catch (e) {}
-      try {
-        const res = await window.storage.get(MONTH_META_KEY, false);
-        if (res && res.value) loadedMeta = JSON.parse(res.value) || {};
       } catch (e) {}
       try {
         const res = await window.storage.get(SCHEDULE_KEY, false);
@@ -645,7 +810,6 @@ export default function App() {
       setSettings(loadedSettings);
       setSettingsDraft(loadedSettings);
       setShifts(loadedShifts);
-      setMonthMeta(loadedMeta);
       setScheduleEntries(loadedSchedule);
       setDarkMode(loadedDark);
       setGoals(loadedGoals);
@@ -701,15 +865,6 @@ export default function App() {
     }
   }, []);
 
-  const persistMonthMeta = useCallback(async (next) => {
-    setMonthMeta(next);
-    try {
-      await window.storage.set(MONTH_META_KEY, JSON.stringify(next), false);
-    } catch (e) {
-      setSaveError('Не удалось сохранить настройки месяца.');
-    }
-  }, []);
-
   const persistGoals = useCallback(async (next) => {
     setGoals(next);
     try {
@@ -735,15 +890,6 @@ export default function App() {
       return next;
     });
   }, []);
-
-  const updateHolidays = useCallback((monthKey, value) => {
-    const n = Math.max(0, parseInt(value, 10) || 0);
-    setMonthMeta((prev) => {
-      const next = { ...prev, [monthKey]: { ...prev[monthKey], holidays: n } };
-      persistMonthMeta(next);
-      return next;
-    });
-  }, [persistMonthMeta]);
 
   function resetForm(person) {
     const p = person || 'p1';
@@ -945,6 +1091,35 @@ export default function App() {
     }
   }
 
+  // ---- Аватарки и имена из вкладки «Статистика» (п.2 запроса) ----
+  function openPeopleModal() {
+    setPeopleDraft({ p1Name: settings.p1Name, p2Name: settings.p2Name, p1Avatar: settings.p1Avatar, p2Avatar: settings.p2Avatar });
+    setShowPeopleModal(true);
+  }
+  async function handlePersonPhoto(person, file) {
+    if (!file) return;
+    setPeoplePhotoBusy(true);
+    try {
+      const dataUrl = await resizeImageFile(file, 320, 0.9, false);
+      setPeopleDraft((d) => ({ ...d, [person === 'p1' ? 'p1Avatar' : 'p2Avatar']: dataUrl }));
+    } catch (e) {
+      setSaveError('Не удалось обработать фото профиля.');
+    } finally {
+      setPeoplePhotoBusy(false);
+    }
+  }
+  function savePeopleForm(e) {
+    e.preventDefault();
+    persistSettings({
+      ...settings,
+      p1Name: peopleDraft.p1Name.trim() || 'Я',
+      p2Name: peopleDraft.p2Name.trim() || 'Жена',
+      p1Avatar: peopleDraft.p1Avatar || '',
+      p2Avatar: peopleDraft.p2Avatar || '',
+    });
+    setShowPeopleModal(false);
+  }
+
   async function handlePostMediaAdd(files) {
     if (!files || !files.length) return;
     setPostBusy(true);
@@ -1033,12 +1208,12 @@ export default function App() {
     const map = {};
     payrollMonths.forEach((mk) => {
       map[mk] = {
-        p1: computeMonthSummary(mk, 'p1', shifts, settings, monthMeta),
-        p2: computeMonthSummary(mk, 'p2', shifts, settings, monthMeta),
+        p1: computeMonthSummary(mk, 'p1', shifts, settings),
+        p2: computeMonthSummary(mk, 'p2', shifts, settings),
       };
     });
     return map;
-  }, [payrollMonths, shifts, settings, monthMeta]);
+  }, [payrollMonths, shifts, settings]);
 
   const overallStats = useMemo(() => {
     const cmk = currentMonthKey();
@@ -1113,6 +1288,52 @@ export default function App() {
     return upcoming[0] || null;
   }, [scheduleEntries]);
 
+  // ---- Плашки «Предположительная выплата аванса/зарплаты» на главном экране (п.7 запроса) ----
+  const payoutCards = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return ['p1', 'p2'].map((person) => {
+      const payout = computeNextPayout(person, shifts, settings, today);
+      const dateLabel = `${payout.date.getDate()} ${MONTHS_GEN[payout.date.getMonth()]}`;
+      const title = payout.type === 'advance'
+        ? `Предположительная выплата аванса ${dateLabel}`
+        : `Предположительная выплата зарплаты ${dateLabel}`;
+      return {
+        person,
+        name: person === 'p1' ? settings.p1Name : settings.p2Name,
+        color: person === 'p1' ? P1_COLOR : P2_COLOR,
+        avatar: person === 'p1' ? settings.p1Avatar : settings.p2Avatar,
+        type: payout.type, title, amount: payout.amount, date: payout.date,
+      };
+    });
+  }, [shifts, settings]);
+
+  // История прошлых выплат (и аванс, и зарплата) для кнопки «История» под плашками.
+  const payoutHistory = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const entries = [];
+    ['p1', 'p2'].forEach((person) => {
+      for (let i = 0; i < 15; i++) {
+        const mk = addMonths(currentMonthKey(), -i);
+        const [y, m] = mk.split('-').map(Number);
+        const advDate = shiftPayDateForWeekend(new Date(y, m - 1, Math.min(ADVANCE_DAY, daysInMonth(y, m))));
+        if (advDate <= today) {
+          const adv = computeAdvanceAmount(mk, person, shifts, settings);
+          if (adv.hours > 0) entries.push({ person, type: 'advance', date: advDate, amount: adv.net, monthKey: mk });
+        }
+        const nextMk = addMonths(mk, 1);
+        const [ny, nm] = nextMk.split('-').map(Number);
+        const salDate = shiftPayDateForWeekend(new Date(ny, nm - 1, Math.min(SALARY_DAY, daysInMonth(ny, nm))));
+        if (salDate <= today) {
+          const sal = computeSalaryAmount(mk, person, shifts, settings);
+          if (sal.hours > 0 && salDate <= today) entries.push({ person, type: 'salary', date: salDate, amount: sal.net, monthKey: mk });
+        }
+      }
+    });
+    return entries.sort((a, b) => b.date - a.date).slice(0, 40);
+  }, [shifts, settings]);
+
   const theme = getTheme(darkMode);
 
   if (loading || !form) {
@@ -1138,7 +1359,16 @@ export default function App() {
 
   return (
     <ThemeCtx.Provider value={theme}>
-      <div className="min-h-screen relative" style={{ fontFamily: SYSTEM_SANS }}>
+      {/*
+        ФИКС НАЛОЖЕНИЯ ЭЛЕМЕНТОВ (см. журнал изменений в начале файла, п.4):
+        раньше фон и нижняя навигация были `position: fixed` — на телефоне (особенно
+        в масштабируемом окне предпросмотра) это вызывало ровно ту картину с фото:
+        нав-бар «съезжал» и наслаивался на список, а фон не покрывал часть экрана.
+        Теперь ВСЁ приложение — один flex-column высотой 100dvh: скроллится только
+        внутренняя область с контентом, а nav — обычный последний элемент колонки,
+        который просто всегда внизу. Никакого fixed/position-хака больше нет.
+      */}
+      <div className="w-full" style={{ minHeight: '100dvh', background: theme.bgGradient, fontFamily: SYSTEM_SANS }}>
         <style>{`
           .font-display { font-family: ${SYSTEM_SANS}; }
           .font-mono-num { font-family: ui-monospace, 'SF Mono', 'SFMono-Regular', Menlo, Monaco, Consolas, monospace; font-variant-numeric: tabular-nums; }
@@ -1150,147 +1380,150 @@ export default function App() {
             *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
           }
         `}</style>
-        <div className="fixed inset-0 pointer-events-none" style={{ background: theme.bgGradient }} />
 
-        <div className="relative max-w-md mx-auto pb-32">
-          <header className="flex items-center justify-between px-5 pt-6 pb-4">
-            <div>
-              <h1 className="font-display text-2xl font-semibold tracking-tight" style={{ color: theme.textPrimary }}>Наша смена</h1>
-              <p className="text-xs mt-0.5" style={{ color: theme.textSecondary }}>Часы, премии и командировочные</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={toggleDarkMode}
-                className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
-                style={{ ...theme.panel, color: theme.textPrimary }}
-                aria-label="Тема"
-              >
-                {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-              </button>
-              <button
-                onClick={() => { setSettingsDraft(settings); setShowSettings(true); }}
-                className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
-                style={{ ...theme.panel, color: theme.textPrimary }}
-                aria-label="Настройки"
-              >
-                <SettingsIcon size={18} />
-              </button>
-            </div>
-          </header>
+        <div className="max-w-md mx-auto flex flex-col" style={{ height: '100dvh' }}>
+          <div className="flex-1 overflow-y-auto overscroll-contain relative" style={{ WebkitOverflowScrolling: 'touch' }}>
+            <header className="flex items-center justify-between px-5 pt-6 pb-4">
+              <div>
+                <h1 className="font-display text-2xl font-semibold tracking-tight" style={{ color: theme.textPrimary }}>Наша смена</h1>
+                <p className="text-xs mt-0.5" style={{ color: theme.textSecondary }}>Часы, премии и командировочные</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={toggleDarkMode}
+                  className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+                  style={{ ...theme.panel, color: theme.textPrimary }}
+                  aria-label="Тема"
+                >
+                  {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                <button
+                  onClick={() => { setSettingsDraft(settings); setShowSettings(true); }}
+                  className="w-10 h-10 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+                  style={{ ...theme.panel, color: theme.textPrimary }}
+                  aria-label="Настройки"
+                >
+                  <SettingsIcon size={18} />
+                </button>
+              </div>
+            </header>
 
-          {saveError && (
-            <div className="mx-5 mb-4 flex items-center gap-2 rounded-2xl text-xs px-3 py-2.5" style={{ ...tintStyle('#b91c1c', 0.1), color: darkMode ? '#FCA5A5' : '#991b1b' }}>
-              <AlertCircle size={14} className="shrink-0" />
-              {saveError}
-            </div>
-          )}
+            {saveError && (
+              <div className="mx-5 mb-4 flex items-center gap-2 rounded-2xl text-xs px-3 py-2.5" style={{ ...tintStyle('#b91c1c', 0.1), color: darkMode ? '#FCA5A5' : '#991b1b' }}>
+                <AlertCircle size={14} className="shrink-0" />
+                {saveError}
+              </div>
+            )}
 
-          <main className="px-5 relative">
-            {tab === 'home' && (
-              <HomeView
-                goal={activeGoal}
-                progress={goalProgress}
-                onOpenGoal={openGoalModal}
-                settings={settings}
-                homeMonth={homeMonth}
-                setHomeMonth={setHomeMonth}
-                availableMonths={shiftMonths}
-                totals={homeTotals}
-                groups={groupedShifts}
-                filterPerson={filterPerson}
-                setFilterPerson={setFilterPerson}
-                onEdit={startEdit}
-                onDelete={handleDelete}
-              />
-            )}
-            {tab === 'stats' && (
-              <StatsView
-                agg={statsAgg}
-                overallStats={overallStats}
-                settings={settings}
-                shiftsCount={shifts.length}
-                availableMonths={payrollMonths}
-                monthSummaries={monthSummaries}
-                statsMonth={effectiveStatsMonth}
-                setStatsMonth={setStatsMonth}
-                statsScope={statsScope}
-                setStatsScope={setStatsScope}
-                statsPerson={statsPerson}
-                setStatsPerson={setStatsPerson}
-                onHolidaysChange={updateHolidays}
-              />
-            )}
-            {tab === 'us' && (
-              <UsView
-                settings={settings}
-                usPeriod={usPeriod}
-                setUsPeriod={setUsPeriod}
-                availableMonths={payrollMonths}
-                usTotal={usTotal}
-                homeP1={homeTotals.p1}
-                shiftsCount={shifts.length}
-                monthlyRecord={monthlyRecord}
-                goal={activeGoal}
-                progress={goalProgress}
-                onOpenGoal={openGoalModal}
-                streak={streak}
-                daysTogether={daysTogether}
-                posts={posts}
-                postDraft={postDraft}
-                setPostDraft={setPostDraft}
-                onAddMedia={handlePostMediaAdd}
-                onRemoveMedia={removePostDraftMedia}
-                onPublish={handlePostSubmit}
-                onDeletePost={handlePostDelete}
-                postBusy={postBusy}
-              />
-            )}
-            {tab === 'schedule' && (
-              <ScheduleView
-                entries={scheduleEntries}
-                settings={settings}
-                form={scheduleForm}
-                setForm={setScheduleForm}
-                onSubmit={handleScheduleSubmit}
-                error={scheduleError}
-                editingId={scheduleEditingId}
-                onCancelEdit={() => resetScheduleForm(scheduleForm.person)}
-                onEdit={startScheduleEdit}
-                onDelete={handleScheduleDelete}
-                filterPerson={scheduleFilterPerson}
-                setFilterPerson={setScheduleFilterPerson}
-                calendarMonth={calendarMonth}
-                setCalendarMonth={setCalendarMonth}
-                calendarGrid={calendarGrid}
-                calendarDayPeople={calendarDayPeople}
-                nextShift={nextShift}
-                onExportICS={() => downloadICS(scheduleEntries, settings)}
-              />
-            )}
-          </main>
-        </div>
-
-        <nav className="fixed bottom-4 inset-x-4 z-40">
-          <div className="max-w-md mx-auto relative">
-            <div className="grid grid-cols-5 gap-1 rounded-3xl px-2 py-2 items-center" style={theme.nav}>
-              <TabButton icon={Home} label="Главная" active={tab === 'home'} onClick={() => setTab('home')} />
-              <TabButton icon={BarChart3} label="Статистика" active={tab === 'stats'} onClick={() => setTab('stats')} />
-              <div />
-              <TabButton icon={Heart} label="Мы" active={tab === 'us'} onClick={() => setTab('us')} />
-              <TabButton icon={Calendar} label="Расписание" active={tab === 'schedule'} onClick={() => setTab('schedule')} />
-            </div>
-            <button
-              onClick={() => { resetForm(form.person); setShowAddModal(true); }}
-              className="absolute left-1/2 -translate-x-1/2 w-14 h-14 rounded-full flex items-center justify-center active:scale-95 transition-transform"
-              style={{ top: '-22px', ...specularButton(HERO_A, HERO_B) }}
-              aria-label="Добавить смену"
-            >
-              <Plus size={26} color="#fff" strokeWidth={2.4} />
-            </button>
+            <main className="px-5 relative pb-8">
+              {tab === 'home' && (
+                <HomeView
+                  goal={activeGoal}
+                  progress={goalProgress}
+                  onOpenGoal={openGoalModal}
+                  settings={settings}
+                  homeMonth={homeMonth}
+                  setHomeMonth={setHomeMonth}
+                  availableMonths={shiftMonths}
+                  totals={homeTotals}
+                  groups={groupedShifts}
+                  filterPerson={filterPerson}
+                  setFilterPerson={setFilterPerson}
+                  onEdit={startEdit}
+                  onDelete={handleDelete}
+                  payoutCards={payoutCards}
+                  onOpenHistory={() => setShowPayoutHistory(true)}
+                />
+              )}
+              {tab === 'stats' && (
+                <StatsView
+                  agg={statsAgg}
+                  overallStats={overallStats}
+                  settings={settings}
+                  shiftsCount={shifts.length}
+                  availableMonths={payrollMonths}
+                  monthSummaries={monthSummaries}
+                  statsMonth={effectiveStatsMonth}
+                  setStatsMonth={setStatsMonth}
+                  statsScope={statsScope}
+                  setStatsScope={setStatsScope}
+                  statsPerson={statsPerson}
+                  setStatsPerson={setStatsPerson}
+                  onEditPeople={openPeopleModal}
+                />
+              )}
+              {tab === 'us' && (
+                <UsView
+                  settings={settings}
+                  usPeriod={usPeriod}
+                  setUsPeriod={setUsPeriod}
+                  availableMonths={payrollMonths}
+                  usTotal={usTotal}
+                  homeP1={homeTotals.p1}
+                  shiftsCount={shifts.length}
+                  monthlyRecord={monthlyRecord}
+                  goal={activeGoal}
+                  progress={goalProgress}
+                  onOpenGoal={openGoalModal}
+                  streak={streak}
+                  daysTogether={daysTogether}
+                  posts={posts}
+                  postDraft={postDraft}
+                  setPostDraft={setPostDraft}
+                  onAddMedia={handlePostMediaAdd}
+                  onRemoveMedia={removePostDraftMedia}
+                  onPublish={handlePostSubmit}
+                  onDeletePost={handlePostDelete}
+                  postBusy={postBusy}
+                />
+              )}
+              {tab === 'schedule' && (
+                <ScheduleView
+                  entries={scheduleEntries}
+                  settings={settings}
+                  form={scheduleForm}
+                  setForm={setScheduleForm}
+                  onSubmit={handleScheduleSubmit}
+                  error={scheduleError}
+                  editingId={scheduleEditingId}
+                  onCancelEdit={() => resetScheduleForm(scheduleForm.person)}
+                  onEdit={startScheduleEdit}
+                  onDelete={handleScheduleDelete}
+                  filterPerson={scheduleFilterPerson}
+                  setFilterPerson={setScheduleFilterPerson}
+                  calendarMonth={calendarMonth}
+                  setCalendarMonth={setCalendarMonth}
+                  calendarGrid={calendarGrid}
+                  calendarDayPeople={calendarDayPeople}
+                  nextShift={nextShift}
+                  onExportICS={() => downloadICS(scheduleEntries, settings)}
+                  onPickDate={(dateStr) => setScheduleForm((f) => ({ ...f, date: dateStr }))}
+                />
+              )}
+            </main>
           </div>
-        </nav>
 
-        {showAddModal && (
+          <nav className="shrink-0 px-4 pt-2 relative z-10" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
+            <div className="relative">
+              <div className="grid grid-cols-5 gap-1 rounded-3xl px-2 py-2 items-center" style={theme.nav}>
+                <TabButton icon={Home} label="Главная" active={tab === 'home'} onClick={() => setTab('home')} />
+                <TabButton icon={BarChart3} label="Статистика" active={tab === 'stats'} onClick={() => setTab('stats')} />
+                <div />
+                <TabButton icon={Heart} label="Мы" active={tab === 'us'} onClick={() => setTab('us')} />
+                <TabButton icon={Calendar} label="Расписание" active={tab === 'schedule'} onClick={() => setTab('schedule')} />
+              </div>
+              <button
+                onClick={() => { resetForm(form.person); setShowAddModal(true); }}
+                className="absolute left-1/2 -translate-x-1/2 w-14 h-14 rounded-full flex items-center justify-center active:scale-95 transition-transform"
+                style={{ top: '-22px', ...specularButton(HERO_A, HERO_B) }}
+                aria-label="Добавить смену"
+              >
+                <Plus size={26} color="#fff" strokeWidth={2.4} />
+              </button>
+            </div>
+          </nav>
+
+          {showAddModal && (
           <AddFormModal
             form={form}
             setForm={setForm}
@@ -1322,6 +1555,26 @@ export default function App() {
             onClose={() => setShowGoalModal(false)}
           />
         )}
+
+        {showPeopleModal && (
+          <PeopleEditModal
+            draft={peopleDraft}
+            setDraft={setPeopleDraft}
+            onSave={savePeopleForm}
+            onClose={() => setShowPeopleModal(false)}
+            onPhoto={handlePersonPhoto}
+            busy={peoplePhotoBusy}
+          />
+        )}
+
+        {showPayoutHistory && (
+          <PayoutHistoryModal
+            settings={settings}
+            history={payoutHistory}
+            onClose={() => setShowPayoutHistory(false)}
+          />
+        )}
+      </div>
       </div>
     </ThemeCtx.Provider>
   );
@@ -1341,8 +1594,18 @@ function TabButton({ icon: Icon, label, active, onClick }) {
   );
 }
 
-function PersonStamp({ letter, color, size }) {
+function PersonStamp({ letter, color, size, avatar }) {
   const dims = size === 'sm' ? 'w-6 h-6 text-xs' : size === 'lg' ? 'w-11 h-11 text-base' : 'w-8 h-8 text-sm';
+  if (avatar) {
+    return (
+      <span
+        className={`${dims} rounded-full overflow-hidden shrink-0 block`}
+        style={{ boxShadow: `0 0 0 2px rgba(255,255,255,0.85), 0 2px 6px -1px ${hexToRgba(color, 0.5)}` }}
+      >
+        <img src={avatar} alt="" className="w-full h-full object-cover" />
+      </span>
+    );
+  }
   return (
     <span
       className={`${dims} rounded-full flex items-center justify-center font-display font-semibold text-white shrink-0`}
@@ -1363,6 +1626,91 @@ function Field({ label, children }) {
       <span className="block text-xs font-medium mb-1.5" style={{ color: theme.textSecondary }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+// Ввод времени 4 цифрами подряд с цифровой клавиатурой (inputMode="numeric") вместо системной
+// «крутилки» iOS — печатаете, например, 1 4 3 0, и поле само подставляет двоеточие: 14:30 (п.5 запроса).
+function TimeField({ value, onChange }) {
+  const theme = useTheme();
+  const [raw, setRaw] = useState(() => (value || '').replace(':', ''));
+  useEffect(() => { setRaw((value || '').replace(':', '')); }, [value]);
+
+  function handleChange(e) {
+    const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
+    setRaw(digits);
+    if (digits.length === 4) {
+      const hh = Math.min(23, parseInt(digits.slice(0, 2), 10));
+      const mm = Math.min(59, parseInt(digits.slice(2, 4), 10));
+      onChange(`${pad2(hh)}:${pad2(mm)}`);
+    } else {
+      onChange('');
+    }
+  }
+  const display = raw.length <= 2 ? raw : `${raw.slice(0, 2)}:${raw.slice(2)}`;
+  return (
+    <input
+      type="text" inputMode="numeric" pattern="[0-9]*" maxLength={5}
+      value={display} onChange={handleChange} placeholder="ЧЧ:ММ"
+      className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
+      style={{ ...theme.well, color: theme.textPrimary }}
+    />
+  );
+}
+
+// Свой календарь для выбора даты — открыт сразу на форме, вместо системного iOS-пикера (п.6 запроса).
+// Управляет своим отображаемым месяцем внутри (стартует с месяца текущего значения `value`).
+function DatePickerField({ value, onChange }) {
+  const theme = useTheme();
+  const [viewMonth, setViewMonth] = useState(() => (value ? value.slice(0, 7) : currentMonthKey()));
+  const grid = useMemo(() => buildCalendarGrid(viewMonth), [viewMonth]);
+  const today = todayStr();
+  return (
+    <div className="rounded-2xl p-3" style={theme.well}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-sm font-medium" style={{ color: theme.textPrimary }}>{monthLabel(viewMonth)}</span>
+        <div className="flex items-center gap-1">
+          <button type="button" onClick={() => setViewMonth(addMonths(viewMonth, -1))} className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.9)' }}>
+            <ChevronLeft size={12} style={{ color: theme.textPrimary }} />
+          </button>
+          <button type="button" onClick={() => setViewMonth(addMonths(viewMonth, 1))} className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: theme.dark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.9)' }}>
+            <ChevronRight size={12} style={{ color: theme.textPrimary }} />
+          </button>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-y-1 mb-0.5">
+        {WEEKDAY_MON_FIRST.map((d) => (
+          <div key={d} className="text-center text-[10px] font-medium" style={{ color: theme.textTertiary }}>{d}</div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 gap-y-1">
+        {grid.map((cell, i) => {
+          const isToday = cell.dateStr === today;
+          const isSelected = cell.dateStr && cell.dateStr === value;
+          const holiday = cell.dateStr && isHolidayDate(cell.dateStr);
+          return (
+            <button
+              type="button" key={i} disabled={!cell.dateStr}
+              onClick={() => onChange(cell.dateStr)}
+              className="flex items-center justify-center"
+              style={{ height: 30 }}
+            >
+              <span
+                className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono-num"
+                style={{
+                  color: !cell.current ? theme.textTertiary : holiday ? '#e11d48' : theme.textPrimary,
+                  fontWeight: holiday ? 700 : 400,
+                  ...(isToday ? { backgroundColor: hexToRgba(HERO_B, 0.16), fontWeight: 700, color: HERO_B } : {}),
+                  ...(isSelected ? { ...specularButton(HERO_A, HERO_B), color: '#fff', fontWeight: 700 } : {}),
+                }}
+              >
+                {cell.day}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1399,14 +1747,14 @@ function GoalHeroCard({ goal, progress, settings, totals, onOpenGoal }) {
       <p className="font-mono-num text-3xl font-bold text-white relative">{formatMoney(totals.total)}</p>
       <div className="flex items-center gap-5 mt-3 relative">
         <div className="flex items-center gap-2">
-          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
+          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" avatar={settings.p1Avatar} />
           <div>
             <p className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>{settings.p1Name}</p>
             <p className="font-mono-num text-sm font-semibold text-white">{formatMoney(totals.p1)}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
+          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" avatar={settings.p2Avatar} />
           <div>
             <p className="text-xs" style={{ color: 'rgba(255,255,255,0.7)' }}>{settings.p2Name}</p>
             <p className="font-mono-num text-sm font-semibold text-white">{formatMoney(totals.p2)}</p>
@@ -1445,7 +1793,67 @@ function GoalHeroCard({ goal, progress, settings, totals, onOpenGoal }) {
   );
 }
 
-function HomeView({ goal, progress, onOpenGoal, settings, homeMonth, setHomeMonth, availableMonths, totals, groups, filterPerson, setFilterPerson, onEdit, onDelete }) {
+// Плашка «Предположительная выплата аванса/зарплаты» для одного человека (см. computeNextPayout).
+function PayoutCard({ card }) {
+  const theme = useTheme();
+  const Icon = card.type === 'advance' ? Wallet : TrendingUp;
+  return (
+    <div className="rounded-3xl p-4 relative overflow-hidden" style={theme.panel}>
+      <div className="absolute inset-0 opacity-70 pointer-events-none" style={{ backgroundImage: `linear-gradient(160deg, ${hexToRgba(card.color, 0.14)}, transparent 60%)` }} />
+      <div className="flex items-center gap-2 mb-2 relative">
+        <PersonStamp letter={card.name.charAt(0).toUpperCase()} color={card.color} size="sm" avatar={card.avatar} />
+        <span className="text-xs font-medium truncate" style={{ color: theme.textSecondary }}>{card.title}</span>
+      </div>
+      <div className="flex items-center gap-1.5 relative">
+        <Icon size={14} style={{ color: card.color }} />
+        <span className="font-mono-num text-lg font-bold" style={{ color: theme.textPrimary }}>{formatMoney(card.amount)}</span>
+      </div>
+      <p className="text-xs mt-0.5 relative" style={{ color: theme.textTertiary }}>
+        {card.type === 'advance' ? 'аванс · часы 1–15' : 'зарплата · часы 16–конец + премии'}
+      </p>
+    </div>
+  );
+}
+
+// Модалка «История выплат» — прошлые авансы и зарплаты по обоим людям.
+function PayoutHistoryModal({ settings, history, onClose }) {
+  const theme = useTheme();
+  return (
+    <div className="fixed inset-0 flex items-end justify-center z-50" style={{ backgroundColor: 'rgba(10,10,15,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="w-full max-w-md p-5 pb-8 overflow-y-auto rounded-t-3xl" style={{ ...theme.nav, maxHeight: '85vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ backgroundColor: 'rgba(120,120,128,0.3)' }} />
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-lg font-semibold" style={{ color: theme.textPrimary }}>История выплат</h2>
+          <button onClick={onClose} className="p-1" style={{ color: theme.textSecondary }} aria-label="Закрыть"><X size={20} /></button>
+        </div>
+        {history.length === 0 ? (
+          <p className="text-sm text-center py-10" style={{ color: theme.textTertiary }}>Пока нет прошлых выплат — появятся после первой смены.</p>
+        ) : (
+          <div className="rounded-3xl overflow-hidden glass-divide" style={theme.panel}>
+            {history.map((h, i) => {
+              const name = h.person === 'p1' ? settings.p1Name : settings.p2Name;
+              const color = h.person === 'p1' ? P1_COLOR : P2_COLOR;
+              const avatar = h.person === 'p1' ? settings.p1Avatar : settings.p2Avatar;
+              const dateLabel = `${pad2(h.date.getDate())}.${pad2(h.date.getMonth() + 1)}.${h.date.getFullYear()}`;
+              return (
+                <div key={`${h.person}-${h.type}-${h.monthKey}-${i}`} className="flex items-center gap-3 px-3.5 py-3">
+                  <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" avatar={avatar} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm" style={{ color: theme.textPrimary }}>{h.type === 'advance' ? 'Аванс' : 'Зарплата'} · {name}</p>
+                    <p className="text-xs" style={{ color: theme.textTertiary }}>{dateLabel}</p>
+                  </div>
+                  <span className="font-mono-num text-sm font-semibold" style={{ color: theme.textPrimary }}>{formatMoney(h.amount)}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HomeView({ goal, progress, onOpenGoal, settings, homeMonth, setHomeMonth, availableMonths, totals, groups, filterPerson, setFilterPerson, onEdit, onDelete, payoutCards, onOpenHistory }) {
   const theme = useTheme();
   const months = useMemo(() => {
     const cur = currentMonthKey();
@@ -1455,6 +1863,20 @@ function HomeView({ goal, progress, onOpenGoal, settings, homeMonth, setHomeMont
   return (
     <div className="pt-1">
       <GoalHeroCard goal={goal} progress={progress} settings={settings} totals={totals} onOpenGoal={onOpenGoal} />
+
+      {/* Плашки «Предположительная выплата аванса/зарплаты» — по одной на человека (п.7 запроса) */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        {payoutCards.map((c) => <PayoutCard key={c.person} card={c} />)}
+      </div>
+      <button
+        type="button" onClick={onOpenHistory}
+        className="w-full flex items-center justify-center gap-1.5 rounded-2xl py-2.5 text-sm font-medium mb-5 transition-all active:scale-95"
+        style={theme.well}
+      >
+        <HistoryIcon size={15} style={{ color: theme.textPrimary }} />
+        <span style={{ color: theme.textPrimary }}>История выплат</span>
+        <ChevronRight size={15} style={{ color: theme.textSecondary }} />
+      </button>
 
       <div className="flex items-center gap-2 mb-4 overflow-x-auto">
         <FilterChip active={filterPerson === 'all'} onClick={() => setFilterPerson('all')}>Все</FilterChip>
@@ -1518,7 +1940,7 @@ function ShiftRow({ shift, settings, onEdit, onDelete }) {
   const hasTimes = shift.startTime && shift.endTime;
   return (
     <div className="flex items-center gap-3 px-3.5 py-3">
-      <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+      <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" avatar={shift.person === 'p1' ? settings.p1Avatar : settings.p2Avatar} />
       <button type="button" onClick={onEdit} className="flex-1 min-w-0 text-left">
         <div className="flex items-center gap-2 text-sm flex-wrap">
           <span className="font-mono-num" style={{ color: weekend ? P2_COLOR : theme.textPrimary, fontWeight: weekend ? 600 : 400 }}>
@@ -1527,6 +1949,7 @@ function ShiftRow({ shift, settings, onEdit, onDelete }) {
           {hasTimes && <span className="text-xs font-mono-num" style={{ color: theme.textSecondary }}>{shift.startTime}–{shift.endTime}</span>}
           {pay.breakHours > 0 && <span className="text-xs font-mono-num" style={{ color: theme.textTertiary }}>−{Math.round(pay.breakHours * 60)} мин</span>}
           {pay.nightBonus > 0 && <Moon size={12} style={{ color: '#818cf8' }} className="shrink-0" />}
+          {isHolidayDate(shift.date) && <PartyPopper size={12} style={{ color: '#d97706' }} className="shrink-0" />}
           {shift.truckReception && <Truck size={12} style={{ color: '#d97706' }} className="shrink-0" />}
           {shift.garbageDuty && <Trash size={12} style={{ color: '#d97706' }} className="shrink-0" />}
           {pay.extra !== 0 && <span className="text-xs font-mono-num" style={{ color: '#d97706' }}>{pay.extra > 0 ? '+' : ''}{formatMoney(pay.extra)}</span>}
@@ -1566,30 +1989,35 @@ function AddFormModal({ form, setForm, settings, onPersonSelect, onSubmit, formE
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <button type="button" onClick={() => onPersonSelect('p1')} className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all" style={form.person === 'p1' ? tintStyle(P1_COLOR, 0.14) : theme.well}>
-              <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
+              <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" avatar={settings.p1Avatar} />
               <span className="text-sm font-medium" style={{ color: form.person === 'p1' ? P1_COLOR : theme.textPrimary }}>{settings.p1Name}</span>
             </button>
             <button type="button" onClick={() => onPersonSelect('p2')} className="flex items-center gap-2 justify-center rounded-2xl py-3 transition-all" style={form.person === 'p2' ? tintStyle(P2_COLOR, 0.14) : theme.well}>
-              <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
+              <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" avatar={settings.p2Avatar} />
               <span className="text-sm font-medium" style={{ color: form.person === 'p2' ? P2_COLOR : theme.textPrimary }}>{settings.p2Name}</span>
             </button>
           </div>
 
           <div className="rounded-3xl p-4 space-y-4" style={theme.panel}>
             <Field label="Дата смены">
-              <input type="date" value={form.date} onChange={update('date')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+              <DatePickerField value={form.date} onChange={(d) => setForm((f) => ({ ...f, date: d }))} />
             </Field>
             {form.date && (
               <p className="text-xs -mt-2 font-medium" style={{ color: isWeekendDate(form.date) ? P2_COLOR : theme.textTertiary }}>
                 {WEEKDAY_FULL[dayOfWeek(form.date)]}{isWeekendDate(form.date) ? ' — премия выходного дня +560 ₽' : ''}
               </p>
             )}
+            {form.date && isHolidayDate(form.date) && (
+              <p className="text-xs -mt-2 font-medium flex items-center gap-1" style={{ color: '#d97706' }}>
+                <PartyPopper size={12} /> Праздничный день — часы не учитываются в премиях «Высокий сезон» и «Любые временные возможности»
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Начало смены">
-                <input type="time" value={form.startTime} onChange={update('startTime')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+                <TimeField value={form.startTime} onChange={(v) => setForm((f) => ({ ...f, startTime: v }))} />
               </Field>
               <Field label="Конец смены">
-                <input type="time" value={form.endTime} onChange={update('endTime')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+                <TimeField value={form.endTime} onChange={(v) => setForm((f) => ({ ...f, endTime: v }))} />
               </Field>
             </div>
             <div>
@@ -1749,32 +2177,44 @@ function GoalFormModal({ form, setForm, onSubmit, onImage, onClose }) {
   );
 }
 
-function StatCard({ label, value, accentColor }) {
+function StatCard({ label, value, accentColor, icon: Icon }) {
   const theme = useTheme();
+  const c = accentColor || HERO_B;
   return (
-    <div className="rounded-3xl p-4" style={theme.panel}>
-      <p className="text-xs mb-1" style={{ color: theme.textSecondary }}>{label}</p>
-      <p className="font-mono-num text-xl font-semibold" style={{ color: accentColor || theme.textPrimary }}>{value}</p>
+    <div className="rounded-3xl p-4 relative overflow-hidden" style={theme.panel}>
+      <div className="absolute inset-0 opacity-60 pointer-events-none" style={{ backgroundImage: `linear-gradient(150deg, ${hexToRgba(c, 0.12)}, transparent 65%)` }} />
+      <div className="flex items-center justify-between mb-2 relative">
+        <p className="text-xs" style={{ color: theme.textSecondary }}>{label}</p>
+        {Icon && (
+          <span className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: hexToRgba(c, 0.16) }}>
+            <Icon size={12} style={{ color: c }} />
+          </span>
+        )}
+      </div>
+      <p className="font-mono-num text-xl font-semibold relative" style={{ color: theme.textPrimary }}>{value}</p>
     </div>
   );
 }
 
-function PayslipCard({ summary, name, color, onHolidaysChange }) {
+function PayslipCard({ summary, name, color, avatar }) {
   const theme = useTheme();
   const s = summary;
   return (
     <div className="rounded-3xl overflow-hidden" style={theme.panel}>
-      <div className="flex items-center justify-between px-4 py-3" style={{ backgroundColor: hexToRgba(color, 0.12), borderBottom: `1px solid ${theme.divider}` }}>
+      <div className="flex items-center justify-between px-4 py-3" style={{ backgroundImage: `linear-gradient(120deg, ${hexToRgba(color, 0.16)}, ${hexToRgba(color, 0.05)})`, borderBottom: `1px solid ${theme.divider}` }}>
         <div className="flex items-center gap-2">
-          <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+          <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" avatar={avatar} />
           <span className="text-sm font-medium" style={{ color: theme.textPrimary }}>{name}</span>
         </div>
         <span className="font-mono-num text-xs" style={{ color: theme.textSecondary }}>{formatHours(s.hours)} · норма {s.norm}ч</span>
       </div>
 
       <div className="flex items-center justify-between px-4 py-2 text-xs" style={{ color: theme.textSecondary, backgroundColor: theme.dark ? 'rgba(255,255,255,0.03)' : 'rgba(15,23,42,0.02)', borderBottom: `1px solid ${theme.divider}` }}>
-        <span>Будних дней: {s.wkd}, праздничных:</span>
-        <input type="number" min="0" value={s.holidays} onChange={(e) => onHolidaysChange(e.target.value)} className="w-14 text-right rounded-lg px-1.5 py-0.5 font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+        <span>Будних дней: {s.wkd}</span>
+        <span className="flex items-center gap-1">
+          {s.holidays > 0 && <PartyPopper size={12} style={{ color: '#d97706' }} />}
+          праздничных: <span className="font-mono-num font-medium" style={{ color: theme.textPrimary }}>{s.holidays}</span> (авто)
+        </span>
       </div>
 
       <div className="glass-divide">
@@ -1804,15 +2244,15 @@ function PayslipCard({ summary, name, color, onHolidaysChange }) {
         </>
       )}
 
-      <div className="flex items-center justify-between px-4 py-3.5" style={EMPHASIS_DARK}>
-        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.7)' }}>Итого к выплате</span>
+      <div className="flex items-center justify-between px-4 py-3.5" style={specularButton(color, hexToRgba(color, 0.7))}>
+        <span className="text-sm" style={{ color: 'rgba(255,255,255,0.85)' }}>Итого к выплате</span>
         <span className="font-mono-num text-white text-lg font-semibold">{formatMoney(s.netTotal)}</span>
       </div>
     </div>
   );
 }
 
-function StatsView({ agg, settings, shiftsCount, availableMonths, monthSummaries, statsMonth, setStatsMonth, statsScope, setStatsScope, statsPerson, setStatsPerson, onHolidaysChange }) {
+function StatsView({ agg, settings, shiftsCount, availableMonths, monthSummaries, statsMonth, setStatsMonth, statsScope, setStatsScope, statsPerson, setStatsPerson, onEditPeople }) {
   const theme = useTheme();
   if (shiftsCount === 0) {
     return (
@@ -1824,10 +2264,23 @@ function StatsView({ agg, settings, shiftsCount, availableMonths, monthSummaries
   const monthData = monthSummaries[statsMonth];
   const personName = statsPerson === 'p1' ? settings.p1Name : settings.p2Name;
   const personColor = statsPerson === 'p1' ? P1_COLOR : P2_COLOR;
+  const personAvatar = statsPerson === 'p1' ? settings.p1Avatar : settings.p2Avatar;
   const donutData = [{ name: 'p1', value: agg.p1 > 0 ? agg.p1 : 0.0001 }, { name: 'p2', value: agg.p2 > 0 ? agg.p2 : 0.0001 }];
 
   return (
     <div className="pt-1 space-y-5">
+      {/* Быстрое редактирование аватарок и имён прямо из статистики (п.2 запроса) */}
+      <div className="flex items-center justify-between rounded-3xl p-3" style={theme.panel}>
+        <div className="flex items-center -space-x-2">
+          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" avatar={settings.p1Avatar} />
+          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" avatar={settings.p2Avatar} />
+          <span className="text-xs pl-3" style={{ color: theme.textSecondary }}>{settings.p1Name} · {settings.p2Name}</span>
+        </div>
+        <button type="button" onClick={onEditPeople} className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={theme.well} aria-label="Изменить фото и имена">
+          <Pencil size={14} style={{ color: theme.textPrimary }} />
+        </button>
+      </div>
+
       <div className="flex rounded-2xl p-1" style={theme.well}>
         <button type="button" onClick={() => setStatsScope('month')} className="flex-1 rounded-xl py-2 text-sm font-medium transition-all" style={statsScope === 'month' ? EMPHASIS_DARK : undefined}>
           <span style={{ color: statsScope === 'month' ? '#fff' : theme.textSecondary }}>Месяц</span>
@@ -1847,10 +2300,10 @@ function StatsView({ agg, settings, shiftsCount, availableMonths, monthSummaries
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Часы" value={formatHours(agg.hours)} />
-        <StatCard label="Доход" value={formatMoney(agg.total)} />
-        <StatCard label="Смены" value={String(agg.count)} />
-        <StatCard label="Ср. за смену" value={formatMoney(agg.avg)} />
+        <StatCard label="Часы" value={formatHours(agg.hours)} icon={Clock} accentColor={HERO_B} />
+        <StatCard label="Доход" value={formatMoney(agg.total)} icon={Wallet} accentColor="#16a34a" />
+        <StatCard label="Смены" value={String(agg.count)} icon={Users} accentColor={P1_COLOR} />
+        <StatCard label="Ср. за смену" value={formatMoney(agg.avg)} icon={TrendingUp} accentColor={P2_COLOR} />
       </div>
 
       <div className="rounded-3xl p-4" style={theme.panel}>
@@ -1901,7 +2354,7 @@ function StatsView({ agg, settings, shiftsCount, availableMonths, monthSummaries
             <FilterChip active={statsPerson === 'p1'} onClick={() => setStatsPerson('p1')} color={P1_COLOR}>{settings.p1Name}</FilterChip>
             <FilterChip active={statsPerson === 'p2'} onClick={() => setStatsPerson('p2')} color={P2_COLOR}>{settings.p2Name}</FilterChip>
           </div>
-          <PayslipCard summary={monthData[statsPerson]} name={personName} color={personColor} onHolidaysChange={(v) => onHolidaysChange(statsMonth, v)} />
+          <PayslipCard summary={monthData[statsPerson]} name={personName} color={personColor} avatar={personAvatar} />
         </div>
       )}
     </div>
@@ -1939,16 +2392,16 @@ function UsView({ settings, usPeriod, setUsPeriod, availableMonths, usTotal, hom
           </select>
         </div>
         <div className="flex items-center -space-x-2 mt-3 relative">
-          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="lg" />
-          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="lg" />
+          <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="lg" avatar={settings.p1Avatar} />
+          <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="lg" avatar={settings.p2Avatar} />
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Смен вместе" value={String(shiftsCount)} />
-        <StatCard label="Рекорд месяца (смен)" value={String(monthlyRecord)} />
-        <StatCard label="Цель месяца" value={formatMoney(settings.monthlyGoal)} />
-        <StatCard label="На мечту" value={goal ? formatMoney(goal.targetAmount) : '—'} />
+        <StatCard label="Смен вместе" value={String(shiftsCount)} icon={Users} accentColor={HERO_B} />
+        <StatCard label="Рекорд месяца (смен)" value={String(monthlyRecord)} icon={Award} accentColor="#d97706" />
+        <StatCard label="Цель месяца" value={formatMoney(settings.monthlyGoal)} icon={Target} accentColor={P1_COLOR} />
+        <StatCard label="На мечту" value={goal ? formatMoney(goal.targetAmount) : '—'} icon={Heart} accentColor={P2_COLOR} />
       </div>
 
       <button onClick={onOpenGoal} className="w-full rounded-3xl p-4 text-left" style={theme.panel}>
@@ -2148,7 +2601,70 @@ function SettingsModal({ draft, setDraft, onSave, onClose }) {
   );
 }
 
-function CalendarGrid({ monthKey, grid, dayPeople, settings, onPrev, onNext }) {
+// Строка с фото + именем одного человека — используется в PeopleEditModal.
+function PersonAvatarEditor({ label, name, onNameChange, avatar, color, onPickPhoto }) {
+  const theme = useTheme();
+  const fileRef = useRef(null);
+  return (
+    <div className="flex items-center gap-3 rounded-2xl p-3" style={theme.well}>
+      <button
+        type="button"
+        onClick={() => fileRef.current && fileRef.current.click()}
+        className="relative shrink-0"
+        aria-label={`Сменить фото — ${label}`}
+      >
+        <PersonStamp letter={(name || label).charAt(0).toUpperCase()} color={color} size="lg" avatar={avatar} />
+        <span className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full flex items-center justify-center" style={specularButton(HERO_A, HERO_B)}>
+          <Camera size={11} color="#fff" />
+        </span>
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => { onPickPhoto(e.target.files && e.target.files[0]); e.target.value = ''; }} />
+      <div className="flex-1 min-w-0">
+        <span className="block text-xs font-medium mb-1" style={{ color: theme.textSecondary }}>{label}</span>
+        <input
+          type="text" value={name} onChange={(e) => onNameChange(e.target.value)}
+          className="w-full rounded-xl px-3 py-2 text-sm"
+          style={{ backgroundColor: theme.dark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.85)', color: theme.textPrimary, border: `1px solid ${theme.divider}` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Модалка «Фото и имена», открывается иконкой карандаша во вкладке «Статистика» (п.2 запроса).
+function PeopleEditModal({ draft, setDraft, onSave, onClose, onPhoto, busy }) {
+  const theme = useTheme();
+  if (!draft) return null;
+  return (
+    <div className="fixed inset-0 flex items-end justify-center z-50" style={{ backgroundColor: 'rgba(10,10,15,0.45)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="w-full max-w-md p-5 pb-8 overflow-y-auto rounded-t-3xl" style={{ ...theme.nav, maxHeight: '90vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ backgroundColor: 'rgba(120,120,128,0.3)' }} />
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-display text-lg font-semibold" style={{ color: theme.textPrimary }}>Фото и имена</h2>
+          <button onClick={onClose} className="p-1" style={{ color: theme.textSecondary }} aria-label="Закрыть"><X size={20} /></button>
+        </div>
+        <form onSubmit={onSave} className="space-y-3">
+          <PersonAvatarEditor
+            label="Человек 1" name={draft.p1Name} avatar={draft.p1Avatar} color={P1_COLOR}
+            onNameChange={(v) => setDraft((d) => ({ ...d, p1Name: v }))}
+            onPickPhoto={(f) => onPhoto('p1', f)}
+          />
+          <PersonAvatarEditor
+            label="Человек 2" name={draft.p2Name} avatar={draft.p2Avatar} color={P2_COLOR}
+            onNameChange={(v) => setDraft((d) => ({ ...d, p2Name: v }))}
+            onPickPhoto={(f) => onPhoto('p2', f)}
+          />
+          {busy && <p className="text-xs" style={{ color: theme.textTertiary }}>Обработка фото…</p>}
+          <button type="submit" className="w-full text-white rounded-2xl py-3 text-sm font-semibold mt-2" style={specularButton(HERO_A, HERO_B)}>
+            Сохранить
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CalendarGrid({ monthKey, grid, dayPeople, settings, onPrev, onNext, onSelectDate, selectedDate }) {
   const theme = useTheme();
   const today = todayStr();
   return (
@@ -2169,26 +2685,37 @@ function CalendarGrid({ monthKey, grid, dayPeople, settings, onPrev, onNext }) {
         {grid.map((cell, i) => {
           const people = cell.dateStr ? dayPeople[cell.dateStr] : null;
           const isToday = cell.dateStr === today;
+          const isSelected = !!selectedDate && cell.dateStr === selectedDate;
+          const holiday = cell.dateStr && isHolidayDate(cell.dateStr);
           return (
-            <div key={i} className="flex flex-col items-center justify-center gap-0.5" style={{ height: 34 }}>
+            // Клик по дню сразу создаёт смену/запись на эту дату (п.6 запроса) — если передан onSelectDate.
+            <button
+              type="button" key={i} disabled={!cell.dateStr}
+              onClick={() => cell.dateStr && onSelectDate && onSelectDate(cell.dateStr)}
+              className="flex flex-col items-center justify-center gap-0.5"
+              style={{ height: 34, cursor: cell.dateStr && onSelectDate ? 'pointer' : 'default' }}
+            >
               <span
                 className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-mono-num"
                 style={{
-                  color: cell.current ? theme.textPrimary : theme.textTertiary,
+                  color: !cell.current ? theme.textTertiary : holiday ? '#e11d48' : theme.textPrimary,
+                  fontWeight: holiday ? 700 : 400,
                   ...(isToday ? { backgroundColor: hexToRgba(HERO_B, 0.16), fontWeight: 700, color: HERO_B } : {}),
+                  ...(isSelected ? { ...specularButton(HERO_A, HERO_B), color: '#fff', fontWeight: 700 } : {}),
                 }}
               >
                 {cell.day}
               </span>
               <div className="flex items-center gap-0.5" style={{ height: 5 }}>
+                {holiday && !(people && people.size) && <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#e11d48' }} />}
                 {people && people.has('p1') && <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: P1_COLOR }} />}
                 {people && people.has('p2') && <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: P2_COLOR }} />}
               </div>
-            </div>
+            </button>
           );
         })}
       </div>
-      <div className="flex items-center gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${theme.divider}` }}>
+      <div className="flex items-center gap-4 mt-3 pt-3 flex-wrap" style={{ borderTop: `1px solid ${theme.divider}` }}>
         <div className="flex items-center gap-1.5">
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: P1_COLOR }} />
           <span className="text-xs" style={{ color: theme.textSecondary }}>{settings.p1Name}</span>
@@ -2197,6 +2724,11 @@ function CalendarGrid({ monthKey, grid, dayPeople, settings, onPrev, onNext }) {
           <span className="w-2 h-2 rounded-full" style={{ backgroundColor: P2_COLOR }} />
           <span className="text-xs" style={{ color: theme.textSecondary }}>{settings.p2Name}</span>
         </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: '#e11d48' }} />
+          <span className="text-xs" style={{ color: theme.textSecondary }}>праздник</span>
+        </div>
+        {onSelectDate && <span className="text-xs ml-auto" style={{ color: theme.textTertiary }}>нажмите на день →</span>}
       </div>
     </div>
   );
@@ -2220,7 +2752,7 @@ function NextShiftCard({ shift, settings }) {
     <div className="rounded-3xl p-4" style={theme.panel}>
       <h3 className="font-display text-sm font-semibold mb-3" style={{ color: theme.textPrimary }}>Ближайшая смена</h3>
       <div className="flex items-center gap-3">
-        <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="md" />
+        <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="md" avatar={shift.person === 'p1' ? settings.p1Avatar : settings.p2Avatar} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium" style={{ color }}>{label} {WEEKDAY_SHORT[dayOfWeek(shift.date)]}</p>
           <p className="font-mono-num text-sm" style={{ color: theme.textPrimary }}>{shift.startTime}–{shift.endTime}</p>
@@ -2232,7 +2764,7 @@ function NextShiftCard({ shift, settings }) {
   );
 }
 
-function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editingId, onCancelEdit, onEdit, onDelete, filterPerson, setFilterPerson, calendarMonth, setCalendarMonth, calendarGrid, calendarDayPeople, nextShift, onExportICS }) {
+function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editingId, onCancelEdit, onEdit, onDelete, filterPerson, setFilterPerson, calendarMonth, setCalendarMonth, calendarGrid, calendarDayPeople, nextShift, onExportICS, onPickDate }) {
   const theme = useTheme();
   const update = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
@@ -2264,6 +2796,8 @@ function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editi
         settings={settings}
         onPrev={() => setCalendarMonth(addMonths(calendarMonth, -1))}
         onNext={() => setCalendarMonth(addMonths(calendarMonth, 1))}
+        onSelectDate={onPickDate}
+        selectedDate={form.date}
       />
 
       <NextShiftCard shift={nextShift} settings={settings} />
@@ -2293,7 +2827,7 @@ function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editi
               className="flex items-center gap-2 justify-center rounded-2xl py-2.5 transition-all"
               style={form.person === 'p1' ? tintStyle(P1_COLOR, 0.14) : theme.well}
             >
-              <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" />
+              <PersonStamp letter={settings.p1Name.charAt(0).toUpperCase()} color={P1_COLOR} size="sm" avatar={settings.p1Avatar} />
               <span className="text-sm font-medium" style={{ color: form.person === 'p1' ? P1_COLOR : theme.textPrimary }}>{settings.p1Name}</span>
             </button>
             <button
@@ -2301,20 +2835,24 @@ function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editi
               className="flex items-center gap-2 justify-center rounded-2xl py-2.5 transition-all"
               style={form.person === 'p2' ? tintStyle(P2_COLOR, 0.14) : theme.well}
             >
-              <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" />
+              <PersonStamp letter={settings.p2Name.charAt(0).toUpperCase()} color={P2_COLOR} size="sm" avatar={settings.p2Avatar} />
               <span className="text-sm font-medium" style={{ color: form.person === 'p2' ? P2_COLOR : theme.textPrimary }}>{settings.p2Name}</span>
             </button>
           </div>
           <div className="rounded-3xl p-4 space-y-3" style={theme.panel}>
-            <Field label="Дата">
-              <input type="date" value={form.date} onChange={update('date')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
-            </Field>
+            {/* Дата теперь выбирается кликом по календарю выше — своя, не системная (п.6 запроса) */}
+            <div className="flex items-center justify-between rounded-xl px-3 py-2" style={theme.well}>
+              <span className="text-xs" style={{ color: theme.textSecondary }}>Дата записи</span>
+              <span className="font-mono-num text-sm font-semibold" style={{ color: isWeekendDate(form.date) ? P2_COLOR : theme.textPrimary }}>
+                {form.date ? `${formatDateShort(form.date)} ${WEEKDAY_SHORT[dayOfWeek(form.date)]}` : '—'}
+              </span>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Начало">
-                <input type="time" value={form.startTime} onChange={update('startTime')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+                <TimeField value={form.startTime} onChange={(v) => setForm((f) => ({ ...f, startTime: v }))} />
               </Field>
               <Field label="Конец">
-                <input type="time" value={form.endTime} onChange={update('endTime')} className="w-full rounded-xl px-3 py-2 text-sm font-mono-num" style={{ ...theme.well, color: theme.textPrimary }} />
+                <TimeField value={form.endTime} onChange={(v) => setForm((f) => ({ ...f, endTime: v }))} />
               </Field>
             </div>
             <Field label="Заметка (необязательно)">
@@ -2351,7 +2889,7 @@ function ScheduleView({ entries, settings, form, setForm, onSubmit, error, editi
                 const weekend = isWeekendDate(entry.date);
                 return (
                   <div key={entry.id} className="flex items-center gap-3 px-3.5 py-3">
-                    <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" />
+                    <PersonStamp letter={name.charAt(0).toUpperCase()} color={color} size="sm" avatar={entry.person === 'p1' ? settings.p1Avatar : settings.p2Avatar} />
                     <button type="button" onClick={() => onEdit(entry)} className="flex-1 min-w-0 text-left">
                       <div className="flex items-center gap-2 text-sm flex-wrap">
                         <span className="font-mono-num" style={{ color: weekend ? P2_COLOR : theme.textPrimary, fontWeight: weekend ? 600 : 400 }}>
