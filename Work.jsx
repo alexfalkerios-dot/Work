@@ -1650,7 +1650,7 @@ function TimeField({ value, onChange }) {
   const display = raw.length <= 2 ? raw : `${raw.slice(0, 2)}:${raw.slice(2)}`;
   return (
     <input
-      type="text" inputMode="numeric" pattern="[0-9]*" maxLength={5}
+      type="text" inputMode="numeric" pattern="[0-9:]*" maxLength={5}
       value={display} onChange={handleChange} placeholder="ЧЧ:ММ"
       className="w-full rounded-xl px-3 py-2 text-sm font-mono-num"
       style={{ ...theme.well, color: theme.textPrimary }}
