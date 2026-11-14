@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useContext, useRef } from 'react';
-import { Plus, Home, Heart, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Sun, Plane, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Calendar, Truck, Trash, ImagePlus, Video, Send, Download, Target, Flame, Award, Wallet, Clock, TrendingUp, Users, PartyPopper, Pencil, Camera, History as HistoryIcon } from 'lucide-react';
+import { Plus, Home, Heart, BarChart3, Settings as SettingsIcon, X, Trash2, AlertCircle, Moon, Sun, Plane, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Calendar, Truck, Trash, ImagePlus, Video, Send, Download, Target, Flame, Award, Wallet, Clock, TrendingUp, Users, PartyPopper, Pencil, Camera, History as HistoryIcon, LockKeyhole, Paperclip, FileText, MessageCircle } from 'lucide-react';
 // ДОБАВЛЕНЫ ИКОНКИ: Wallet/Clock/TrendingUp/Users — для более наглядных карточек статистики;
 // PartyPopper — маркер праздничного дня; Pencil/Camera — редактирование имени/аватара; HistoryIcon — кнопка «История» на главном экране.
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -99,7 +99,9 @@ const SETTINGS_KEY = 'settings';
 const SCHEDULE_KEY = 'scheduleEntries';
 const GOALS_KEY = 'goals';
 const POSTS_KEY = 'posts';
+const WALL_KEY = 'ourWallMessages';
 const THEME_KEY = 'theme';
+const WALL_PASSWORD = 'кактус';
 
 // ---------- Константы начислений ----------
 const TAX_RATE = 0.13;
@@ -589,6 +591,30 @@ function normalizePost(raw) {
     createdAt: raw.createdAt || Date.now(),
   };
 }
+function normalizeWallMessage(raw) {
+  return {
+    id: raw.id || genId(),
+    text: raw.text || '',
+    attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
+    deviceLabel: raw.deviceLabel || 'Устройство',
+    createdAt: raw.createdAt || Date.now(),
+  };
+}
+function getDeviceLabel() {
+  if (typeof navigator === 'undefined') return 'Устройство';
+  if (navigator.userAgentData && navigator.userAgentData.model) return navigator.userAgentData.model;
+  const ua = navigator.userAgent || '';
+  if (/iPhone/i.test(ua)) return 'iPhone';
+  if (/iPad/i.test(ua)) return 'iPad';
+  if (/Android/i.test(ua)) {
+    const match = ua.match(/Android[^;]*;\s*(?:[^;]+;\s*)?([^;)]+?)(?:\s+Build\/[^;)]+)?[;)].*$/i);
+    return match && match[1] ? match[1].trim() : 'Android';
+  }
+  if (/Macintosh/i.test(ua)) return 'Mac';
+  if (/Windows/i.test(ua)) return 'Windows';
+  if (/Linux/i.test(ua)) return 'Linux';
+  return 'Браузер';
+}
 function formatPostDate(ts) {
   const d = new Date(ts);
   return `${pad2(d.getDate())} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
@@ -762,6 +788,12 @@ export default function App() {
   const [calendarMonth, setCalendarMonth] = useState(currentMonthKey());
   const [postDraft, setPostDraft] = useState({ text: '', media: [] });
   const [postBusy, setPostBusy] = useState(false);
+  const [wallMessages, setWallMessages] = useState([]);
+  const [wallUnlocked, setWallUnlocked] = useState(false);
+  const [wallPassword, setWallPassword] = useState('');
+  const [wallPasswordError, setWallPasswordError] = useState('');
+  const [wallDraft, setWallDraft] = useState({ text: '', attachments: [] });
+  const [wallBusy, setWallBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -771,6 +803,7 @@ export default function App() {
       let loadedDark = false;
       let loadedGoals = [];
       let loadedPosts = [];
+      let loadedWallMessages = [];
       try {
         const res = await window.storage.get(SETTINGS_KEY, false);
         if (res && res.value) loadedSettings = { ...DEFAULT_SETTINGS, ...JSON.parse(res.value) };
@@ -807,6 +840,13 @@ export default function App() {
           if (Array.isArray(parsed)) loadedPosts = parsed.map(normalizePost);
         }
       } catch (e) {}
+      try {
+        const res = await window.storage.get(WALL_KEY, false);
+        if (res && res.value) {
+          const parsed = JSON.parse(res.value);
+          if (Array.isArray(parsed)) loadedWallMessages = parsed.map(normalizeWallMessage);
+        }
+      } catch (e) {}
       setSettings(loadedSettings);
       setSettingsDraft(loadedSettings);
       setShifts(loadedShifts);
@@ -814,6 +854,7 @@ export default function App() {
       setDarkMode(loadedDark);
       setGoals(loadedGoals);
       setPosts(loadedPosts);
+      setWallMessages(loadedWallMessages);
       setForm({
         date: todayStr(),
         person: 'p1',
@@ -880,6 +921,16 @@ export default function App() {
       await window.storage.set(POSTS_KEY, JSON.stringify(next), false);
     } catch (e) {
       setSaveError('Не удалось сохранить пост.');
+    }
+  }, []);
+
+  const persistWallMessages = useCallback(async (next) => {
+    setWallMessages(next);
+    try {
+      const result = await window.storage.set(WALL_KEY, JSON.stringify(next), false);
+      setSaveError(result ? '' : 'Не удалось сохранить сообщение на стене.');
+    } catch (e) {
+      setSaveError('Не удалось сохранить сообщение на стене.');
     }
   }, []);
 
@@ -1153,6 +1204,61 @@ export default function App() {
     persistPosts(posts.filter((p) => p.id !== id));
   }
 
+  function unlockWall(e) {
+    e.preventDefault();
+    if (wallPassword.trim().toLowerCase() === WALL_PASSWORD) {
+      setWallUnlocked(true);
+      setWallPassword('');
+      setWallPasswordError('');
+    } else {
+      setWallPasswordError('Неверный код доступа.');
+    }
+  }
+
+  async function handleWallFileAdd(files) {
+    if (!files || !files.length) return;
+    setWallBusy(true);
+    try {
+      const items = [];
+      for (const file of Array.from(files)) {
+        if (file.size > 8 * 1024 * 1024) {
+          throw new Error('Файл больше 8 МБ');
+        }
+        items.push({
+          id: genId(),
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          size: file.size,
+          url: await readFileAsDataUrl(file),
+        });
+      }
+      setWallDraft((draft) => ({ ...draft, attachments: [...draft.attachments, ...items] }));
+    } catch (e) {
+      setSaveError(e.message === 'Файл больше 8 МБ' ? 'Для тестовой стены размер файла ограничен 8 МБ.' : 'Не удалось прочитать файл.');
+    } finally {
+      setWallBusy(false);
+    }
+  }
+
+  function removeWallAttachment(id) {
+    setWallDraft((draft) => ({ ...draft, attachments: draft.attachments.filter((file) => file.id !== id) }));
+  }
+
+  function handleWallSubmit() {
+    if (!wallDraft.text.trim() && wallDraft.attachments.length === 0) return;
+    const entry = normalizeWallMessage({
+      text: wallDraft.text.trim(),
+      attachments: wallDraft.attachments,
+      deviceLabel: getDeviceLabel(),
+    });
+    persistWallMessages([...wallMessages, entry]);
+    setWallDraft({ text: '', attachments: [] });
+  }
+
+  function handleWallDelete(id) {
+    persistWallMessages(wallMessages.filter((message) => message.id !== id));
+  }
+
   const shiftMonths = useMemo(() => {
     return Array.from(new Set(shifts.map((s) => s.date.slice(0, 7)))).sort().reverse();
   }, [shifts]);
@@ -1385,8 +1491,12 @@ export default function App() {
           <div className="flex-1 overflow-y-auto overscroll-contain relative" style={{ WebkitOverflowScrolling: 'touch' }}>
             <header className="flex items-center justify-between px-5 pt-6 pb-4">
               <div>
-                <h1 className="font-display text-2xl font-semibold tracking-tight" style={{ color: theme.textPrimary }}>Наша смена</h1>
-                <p className="text-xs mt-0.5" style={{ color: theme.textSecondary }}>Часы, премии и командировочные</p>
+                <h1 className="font-display text-2xl font-semibold tracking-tight" style={{ color: theme.textPrimary }}>
+                  {tab === 'wall' ? 'Наша Стена' : 'Наша смена'}
+                </h1>
+                <p className="text-xs mt-0.5" style={{ color: theme.textSecondary }}>
+                  {tab === 'wall' ? 'Личные сообщения и файлы' : 'Часы, премии и командировочные'}
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1500,14 +1610,33 @@ export default function App() {
                   onPickDate={(dateStr) => setScheduleForm((f) => ({ ...f, date: dateStr }))}
                 />
               )}
+              {tab === 'wall' && (
+                <WallView
+                  unlocked={wallUnlocked}
+                  password={wallPassword}
+                  setPassword={(value) => { setWallPassword(value); setWallPasswordError(''); }}
+                  passwordError={wallPasswordError}
+                  onUnlock={unlockWall}
+                  messages={wallMessages}
+                  draft={wallDraft}
+                  setDraft={setWallDraft}
+                  onAddFile={handleWallFileAdd}
+                  onRemoveFile={removeWallAttachment}
+                  onPublish={handleWallSubmit}
+                  onDelete={handleWallDelete}
+                  busy={wallBusy}
+                  onLock={() => setWallUnlocked(false)}
+                />
+              )}
             </main>
           </div>
 
           <nav className="shrink-0 px-4 pt-2 relative z-10" style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}>
             <div className="relative">
-              <div className="grid grid-cols-5 gap-1 rounded-3xl px-2 py-2 items-center" style={theme.nav}>
+              <div className="grid grid-cols-6 gap-1 rounded-3xl px-2 py-2 items-center" style={theme.nav}>
                 <TabButton icon={Home} label="Главная" active={tab === 'home'} onClick={() => setTab('home')} />
                 <TabButton icon={BarChart3} label="Статистика" active={tab === 'stats'} onClick={() => setTab('stats')} />
+                <TabButton icon={MessageCircle} label="Наша Стена" active={tab === 'wall'} onClick={() => setTab('wall')} />
                 <div />
                 <TabButton icon={Heart} label="Мы" active={tab === 'us'} onClick={() => setTab('us')} />
                 <TabButton icon={Calendar} label="Расписание" active={tab === 'schedule'} onClick={() => setTab('schedule')} />
@@ -1626,6 +1755,174 @@ function Field({ label, children }) {
       <span className="block text-xs font-medium mb-1.5" style={{ color: theme.textSecondary }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+function formatWallFileSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+function WallAttachment({ file, compact = false, onRemove }) {
+  const theme = useTheme();
+  const isImage = file.type && file.type.startsWith('image/');
+  const isVideo = file.type && file.type.startsWith('video/');
+  return (
+    <div className={`relative overflow-hidden rounded-2xl ${compact ? 'w-20 shrink-0' : ''}`} style={theme.well}>
+      {isImage ? (
+        <img src={file.url} alt={file.name || ''} className={compact ? 'w-20 h-20 object-cover' : 'w-full max-h-64 object-cover'} />
+      ) : isVideo ? (
+        <video src={file.url} controls className={compact ? 'w-20 h-20 object-cover' : 'w-full max-h-64 object-cover'} />
+      ) : (
+        <a
+          href={file.url}
+          download={file.name || 'файл'}
+          className="flex items-center gap-2 px-3 py-2.5 min-w-0"
+          style={{ color: theme.textPrimary }}
+        >
+          <FileText size={18} className="shrink-0" style={{ color: HERO_B }} />
+          <span className="min-w-0">
+            <span className="block text-xs font-medium truncate">{file.name || 'Файл'}</span>
+            <span className="block text-[10px]" style={{ color: theme.textTertiary }}>{formatWallFileSize(file.size)}</span>
+          </span>
+          <Download size={14} className="shrink-0" style={{ color: theme.textSecondary }} />
+        </a>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="absolute top-1 right-1 w-5 h-5 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.62)' }}
+          aria-label="Удалить вложение"
+        >
+          <X size={11} color="#fff" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WallView({ unlocked, password, setPassword, passwordError, onUnlock, messages, draft, setDraft, onAddFile, onRemoveFile, onPublish, onDelete, busy, onLock }) {
+  const theme = useTheme();
+  const fileRef = useRef(null);
+  const orderedMessages = useMemo(() => messages.slice().sort((a, b) => a.createdAt - b.createdAt), [messages]);
+
+  if (!unlocked) {
+    return (
+      <div className="pt-1 space-y-4">
+        <div className="rounded-3xl p-5" style={theme.panel}>
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center mb-4" style={{ ...tintStyle(HERO_B, 0.14), color: HERO_B }}>
+            <LockKeyhole size={22} />
+          </div>
+          <h2 className="font-display text-lg font-semibold" style={{ color: theme.textPrimary }}>Наша Стена закрыта</h2>
+          <p className="text-sm mt-1.5 mb-5" style={{ color: theme.textSecondary }}>
+            Введите код, чтобы открыть личную стену сообщений и файлов.
+          </p>
+          <form onSubmit={onUnlock} className="space-y-3">
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Код доступа"
+              className="w-full rounded-2xl px-4 py-3 text-sm"
+              style={{ ...theme.well, color: theme.textPrimary }}
+            />
+            {passwordError && <p className="text-xs" style={{ color: theme.danger }}>{passwordError}</p>}
+            <button type="submit" className="w-full rounded-2xl py-3 text-sm font-semibold text-white" style={specularButton(HERO_A, HERO_B)}>
+              Открыть стену
+            </button>
+          </form>
+          <p className="text-[11px] mt-4" style={{ color: theme.textTertiary }}>
+            Тестовый код задаётся прямо в приложении и не является настоящей защитой.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-1 space-y-3">
+      <div className="rounded-3xl px-4 py-3 flex items-center justify-between" style={theme.panel}>
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundImage: `linear-gradient(135deg, ${HERO_A}, ${HERO_B})`, color: '#fff' }}>
+            <MessageCircle size={19} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold truncate" style={{ color: theme.textPrimary }}>Избранные</p>
+            <p className="text-xs truncate" style={{ color: theme.textSecondary }}>Наша Стена · {messages.length} сообщений</p>
+          </div>
+        </div>
+        <button type="button" onClick={onLock} className="text-xs rounded-full px-2.5 py-1.5" style={{ ...theme.well, color: theme.textSecondary }}>
+          Закрыть
+        </button>
+      </div>
+
+      <div className="rounded-3xl p-3 min-h-[42vh] space-y-3" style={{ background: theme.dark ? 'rgba(19,25,34,0.72)' : 'rgba(225,235,244,0.65)', border: `1px solid ${theme.divider}` }}>
+        {orderedMessages.length === 0 ? (
+          <div className="min-h-[34vh] flex flex-col items-center justify-center text-center px-6">
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mb-3" style={{ backgroundColor: theme.dark ? 'rgba(255,255,255,0.09)' : 'rgba(255,255,255,0.7)', color: HERO_B }}>
+              <MessageCircle size={24} />
+            </div>
+            <p className="text-sm font-medium" style={{ color: theme.textPrimary }}>Пока здесь пусто</p>
+            <p className="text-xs mt-1" style={{ color: theme.textSecondary }}>Сохраняйте сюда мысли, сообщения и файлы.</p>
+          </div>
+        ) : (
+          orderedMessages.map((message) => (
+            <div key={message.id} className="flex justify-end">
+              <div className="max-w-[88%] rounded-2xl rounded-br-md px-3.5 py-2.5" style={{ backgroundColor: theme.dark ? 'rgba(76,116,178,0.72)' : '#d8fdd2', color: theme.textPrimary, boxShadow: '0 2px 6px rgba(15,23,42,0.06)' }}>
+                <div className="flex items-center justify-between gap-3 mb-1">
+                  <span className="text-[10px] font-semibold truncate" style={{ color: theme.dark ? '#D8E8FF' : '#3b7a4a' }}>{message.deviceLabel}</span>
+                  <span className="text-[10px] shrink-0" style={{ color: theme.dark ? 'rgba(255,255,255,0.65)' : '#6b7f70' }}>{formatPostDate(message.createdAt)}</span>
+                </div>
+                {message.text && <p className="text-sm whitespace-pre-wrap break-words">{message.text}</p>}
+                {message.attachments.length > 0 && (
+                  <div className={`space-y-2 ${message.text ? 'mt-2' : ''}`}>
+                    {message.attachments.map((file) => <WallAttachment key={file.id} file={file} />)}
+                  </div>
+                )}
+                <div className="flex justify-end mt-1">
+                  <button type="button" onClick={() => onDelete(message.id)} className="text-[10px]" style={{ color: theme.dark ? 'rgba(255,255,255,0.58)' : '#6b7f70' }}>
+                    удалить
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="rounded-3xl p-3" style={theme.panel}>
+        {draft.attachments.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-2">
+            {draft.attachments.map((file) => <WallAttachment key={file.id} file={file} compact onRemove={() => onRemoveFile(file.id)} />)}
+          </div>
+        )}
+        <div className="flex items-end gap-2">
+          <button type="button" onClick={() => fileRef.current && fileRef.current.click()} disabled={busy} className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={theme.well} aria-label="Прикрепить файл">
+            <Paperclip size={17} style={{ color: theme.textSecondary }} />
+          </button>
+          <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { onAddFile(e.target.files); e.target.value = ''; }} />
+          <textarea
+            rows={1}
+            placeholder="Сообщение"
+            value={draft.text}
+            onChange={(e) => setDraft((value) => ({ ...value, text: e.target.value }))}
+            className="flex-1 rounded-2xl px-3 py-2.5 text-sm resize-none"
+            style={{ ...theme.well, color: theme.textPrimary }}
+          />
+          <button type="button" onClick={onPublish} disabled={busy || (!draft.text.trim() && draft.attachments.length === 0)} className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 text-white disabled:opacity-40" style={specularButton(HERO_A, HERO_B)} aria-label="Отправить">
+            <Send size={16} />
+          </button>
+        </div>
+        <p className="text-[10px] mt-2 px-1" style={{ color: theme.textTertiary }}>
+          Файлы хранятся локально на этом устройстве · до 8 МБ каждый
+        </p>
+      </div>
+    </div>
   );
 }
 
